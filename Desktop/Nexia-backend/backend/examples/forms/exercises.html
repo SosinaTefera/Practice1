@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nexia – Exercises Search/List</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial; margin: 2rem; line-height: 1.5; }
+    form { max-width: 860px; padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    label { display: block; font-weight: 600; margin-top: 12px; }
+    input, select { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
+    button { margin-top: 16px; padding: 10px 16px; border-radius: 6px; border: 1px solid #2563eb; background: #2563eb; color: #fff; cursor: pointer; }
+    pre { background: #0b1021; color: #e5e7eb; padding: 12px; border-radius: 8px; overflow: auto; }
+    .hint { color: #6b7280; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <h1>Exercises – Nexia API</h1>
+  <p class="hint">Endpoint: <code>GET https://nexiaapp.com/api/v1/exercises/</code> with optional filters. Requires Bearer token.</p>
+
+  <label for="token">Bearer token</label>
+  <input id="token" type="text" placeholder="Paste access_token here" />
+
+  <form id="exForm">
+    <div class="grid">
+      <div>
+        <label for="search">Search</label>
+        <input id="search" name="search" type="text" placeholder="sentadilla" />
+      </div>
+      <div>
+        <label for="tipo">Tipo</label>
+        <input id="tipo" name="tipo" type="text" placeholder="fuerza / cardio" />
+      </div>
+      <div>
+        <label for="categoria">Categoría</label>
+        <input id="categoria" name="categoria" type="text" placeholder="Multiarticular" />
+      </div>
+      <div>
+        <label for="nivel">Nivel</label>
+        <input id="nivel" name="nivel" type="text" placeholder="beginner" />
+      </div>
+      <div>
+        <label for="equipo">Equipo</label>
+        <input id="equipo" name="equipo" type="text" placeholder="mancuernas / barra" />
+      </div>
+      <div>
+        <label for="patron">Patrón movimiento</label>
+        <input id="patron" name="patron_movimiento" type="text" placeholder="empuje / tracción" />
+      </div>
+      <div>
+        <label for="tipo_carga">Tipo carga</label>
+        <input id="tipo_carga" name="tipo_carga" type="text" placeholder="libre / máquina" />
+      </div>
+      <div>
+        <label for="skip">Skip</label>
+        <input id="skip" name="skip" type="number" min="0" value="0" />
+      </div>
+      <div>
+        <label for="limit">Limit</label>
+        <input id="limit" name="limit" type="number" min="1" max="1000" value="50" />
+      </div>
+    </div>
+
+    <button type="submit">Search</button>
+  </form>
+
+  <h3>Response</h3>
+  <pre id="output">Submit the form to see the API response...</pre>
+
+  <script>
+    const API_BASE = "https://nexiaapp.com/api/v1";
+    const form = document.getElementById("exForm");
+    const out = document.getElementById("output");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      out.textContent = "Loading...";
+
+      const params = new URLSearchParams();
+      const add = (k, v) => { if (v) params.set(k, v); };
+      add("search", form.search.value.trim());
+      add("tipo", form.tipo.value.trim());
+      add("categoria", form.categoria.value.trim());
+      add("nivel", form.nivel.value.trim());
+      add("equipo", form.equipo.value.trim());
+      add("patron_movimiento", form.patron_movimiento.value?.trim());
+      add("tipo_carga", form.tipo_carga.value?.trim());
+      add("skip", form.skip.value);
+      add("limit", form.limit.value);
+
+      try {
+        const res = await fetch(`${API_BASE}/exercises/?${params.toString()}`, {
+          headers: {
+            "Authorization": `Bearer ${document.getElementById("token").value.trim()}`,
+          },
+        });
+        const text = await res.text();
+        out.textContent = `Status: ${res.status}\n\n${text}`;
+      } catch (err) {
+        out.textContent = String(err);
+      }
+    });
+  </script>
+</body>
+</html>
+
+

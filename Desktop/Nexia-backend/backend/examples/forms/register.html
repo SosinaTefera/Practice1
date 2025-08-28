@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nexia – Register (API Demo)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin: 2rem; line-height: 1.5; }
+    form { max-width: 560px; padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    label { display: block; font-weight: 600; margin-top: 12px; }
+    input, select { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
+    button { margin-top: 16px; padding: 10px 16px; border-radius: 6px; border: 1px solid #2563eb; background: #2563eb; color: #fff; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    pre { background: #0b1021; color: #e5e7eb; padding: 12px; border-radius: 8px; overflow: auto; }
+    .hint { color: #6b7280; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <h1>Register – Nexia API</h1>
+  <p class="hint">This example calls the production endpoint <code>POST https://nexiaapp.com/api/v1/auth/register</code> with a JSON body.</p>
+
+  <form id="registerForm">
+    <div class="row">
+      <div>
+        <label for="nombre">Nombre</label>
+        <input id="nombre" name="nombre" type="text" placeholder="Jane" required />
+      </div>
+      <div>
+        <label for="apellidos">Apellidos</label>
+        <input id="apellidos" name="apellidos" type="text" placeholder="Doe" required />
+      </div>
+    </div>
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" placeholder="jane@example.com" required />
+
+    <div class="row">
+      <div>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required />
+      </div>
+      <div>
+        <label for="role">Role</label>
+        <select id="role" name="role">
+          <option value="trainer">trainer</option>
+          <option value="athlete">athlete</option>
+          <option value="admin">admin</option>
+        </select>
+      </div>
+    </div>
+
+    <button type="submit">Register</button>
+  </form>
+
+  <h3>Response</h3>
+  <pre id="output">Submit the form to see the API response...</pre>
+
+  <script>
+    const API_BASE = "https://nexiaapp.com/api/v1";
+    const form = document.getElementById("registerForm");
+    const out = document.getElementById("output");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      out.textContent = "Submitting...";
+
+      const data = {
+        nombre: form.nombre.value.trim(),
+        apellidos: form.apellidos.value.trim(),
+        email: form.email.value.trim(),
+        password: form.password.value,
+        role: form.role.value,
+      };
+
+      try {
+        const res = await fetch(`${API_BASE}/auth/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        const text = await res.text();
+        out.textContent = `Status: ${res.status}\n\n${text}`;
+      } catch (err) {
+        out.textContent = String(err);
+      }
+    });
+  </script>
+
+  <p class="hint">Note: If you open this file directly (file://), browsers may block requests. Serve locally with <code>python3 -m http.server 5500</code> and ensure CORS allows <code>http://localhost:5500</code> in the backend.</p>
+</body>
+</html>
+
+

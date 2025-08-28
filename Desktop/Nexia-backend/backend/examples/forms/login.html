@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nexia – Login (API Demo)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial; margin: 2rem; line-height: 1.5; }
+    form { max-width: 520px; padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; }
+    label { display: block; font-weight: 600; margin-top: 12px; }
+    input { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
+    button { margin-top: 16px; padding: 10px 16px; border-radius: 6px; border: 1px solid #2563eb; background: #2563eb; color: #fff; cursor: pointer; }
+    pre { background: #0b1021; color: #e5e7eb; padding: 12px; border-radius: 8px; overflow: auto; }
+    .hint { color: #6b7280; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <h1>Login – Nexia API</h1>
+  <p class="hint">This example calls <code>POST https://nexiaapp.com/api/v1/auth/login</code> using <strong>application/x-www-form-urlencoded</strong> (OAuth2 password flow).</p>
+
+  <form id="loginForm">
+    <label for="username">Email</label>
+    <input id="username" name="username" type="email" placeholder="jane@example.com" required />
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" required />
+
+    <button type="submit">Login</button>
+  </form>
+
+  <h3>Response</h3>
+  <pre id="output">Submit the form to see the API response...</pre>
+
+  <script>
+    const API_BASE = "https://nexiaapp.com/api/v1";
+    const form = document.getElementById("loginForm");
+    const out = document.getElementById("output");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      out.textContent = "Submitting...";
+
+      const body = new URLSearchParams();
+      body.set("username", form.username.value.trim());
+      body.set("password", form.password.value);
+
+      try {
+        const res = await fetch(`${API_BASE}/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body
+        });
+        const text = await res.text();
+        out.textContent = `Status: ${res.status}\n\n${text}`;
+      } catch (err) {
+        out.textContent = String(err);
+      }
+    });
+  </script>
+
+  <p class="hint">Tip: Copy the returned <code>access_token</code> and use it in the other examples as a Bearer token.</p>
+</body>
+</html>
+
+
