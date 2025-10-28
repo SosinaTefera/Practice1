@@ -124,11 +124,44 @@ Key environment variables (see `env.example` for complete list):
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DATABASE_URL` | Database connection string | `sqlite:///./nexia.db` |
+| `DATABASE_URL` | Database connection string (use `postgresql+psycopg2://` for PostgreSQL) | `sqlite:///./nexia.db` |
 | `SECRET_KEY` | Secret key for security | `your-secret-key-change-in-production` |
 | `ENVIRONMENT` | Environment (development/production/testing) | `development` |
 | `DEBUG` | Enable debug mode | `True` |
 | `LOG_LEVEL` | Logging level | `INFO` |
+| `SMTP_HOST` | SMTP server host (optional) | `None` |
+| `SMTP_PORT` | SMTP server port (optional) | `587` |
+| `SMTP_USERNAME` | SMTP username (optional) | `None` |
+| `SMTP_PASSWORD` | SMTP password (optional) | `None` |
+| `SMTP_SENDER` | SMTP sender email (optional) | `None` |
+| `SMTP_USE_TLS` | Use TLS for SMTP (optional) | `True` |
+
+### Database Configuration
+- **SQLite (Development)**: `DATABASE_URL=sqlite:///./nexia.db`
+- **PostgreSQL (Production)**: `DATABASE_URL=postgresql+psycopg2://user:password@localhost/nexia`
+- **MySQL (Production)**: `DATABASE_URL=mysql://user:password@localhost/nexia`
+
+## 🔐 Role-Based Access Control (RBAC)
+
+### User Roles
+- **admin**: Full system access, can manage all data
+- **trainer**: Can manage their own clients and training data
+- **athlete**: Can view their own data and submit feedback
+
+### Access Matrix
+
+| Endpoint Category | Admin | Trainer | Athlete |
+|------------------|-------|---------|---------|
+| Client Management | ✅ All | ✅ Own clients only | ❌ |
+| Trainer Management | ✅ All | ❌ | ❌ |
+| Exercise Database | ✅ All | ✅ All | ✅ All |
+| Training Plans | ✅ All | ✅ Own plans only | ✅ Own plans only |
+| Training Sessions | ✅ All | ✅ Own sessions only | ✅ Own sessions only |
+| Client Feedback | ✅ All | ✅ Own clients only | ✅ Own feedback only |
+| Progress Tracking | ✅ All | ✅ Own clients only | ✅ Own progress only |
+| Fatigue Analysis | ✅ All | ✅ Own clients only | ✅ Own data only |
+| Fatigue Alerts | ✅ All | ✅ Own alerts only | ❌ |
+| Workload Tracking | ✅ All | ✅ Own clients only | ✅ Own data only |
 
 ## 📈 API Endpoints
 
@@ -171,6 +204,74 @@ Key environment variables (see `env.example` for complete list):
 - `GET /api/v1/auth/me` – Current user info
 - `POST /api/v1/auth/forgot-password` – Request a password reset token (also emails if SMTP configured)
 - `POST /api/v1/auth/reset-password` – Reset password using token
+ - `POST /api/v1/auth/change-password` – Change password (requires current password)
+ - `PUT /api/v1/auth/me` – Update current user profile (name/email)
+ - `DELETE /api/v1/auth/me` – Deactivate account (GDPR-friendly)
+ - `POST /api/v1/auth/refresh` – Rotate refresh token and issue new access token
+ - `POST /api/v1/auth/logout` – Revoke current refresh token (server-side logout)
+
+### Training Planning System
+- `POST /api/v1/training-plans/` – Create training plan
+- `GET /api/v1/training-plans/` – List training plans
+- `GET /api/v1/training-plans/{plan_id}` – Get training plan
+- `PUT /api/v1/training-plans/{plan_id}` – Update training plan
+- `DELETE /api/v1/training-plans/{plan_id}` – Delete training plan
+
+### Multi-stage Planning
+- `POST /api/v1/training-plans/{plan_id}/macrocycles/` – Create macrocycle
+- `GET /api/v1/training-plans/{plan_id}/macrocycles/` – List macrocycles
+- `POST /api/v1/macrocycles/{macrocycle_id}/mesocycles/` – Create mesocycle
+- `GET /api/v1/macrocycles/{macrocycle_id}/mesocycles/` – List mesocycles
+- `POST /api/v1/mesocycles/{mesocycle_id}/microcycles/` – Create microcycle
+- `GET /api/v1/mesocycles/{mesocycle_id}/microcycles/` – List microcycles
+
+### Training Sessions
+- `POST /api/v1/training-sessions/` – Create training session
+- `GET /api/v1/training-sessions/` – List training sessions (with filters)
+- `GET /api/v1/training-sessions/{session_id}` – Get training session
+- `PUT /api/v1/training-sessions/{session_id}` – Update training session
+- `DELETE /api/v1/training-sessions/{session_id}` – Delete training session
+
+### Session Exercises
+- `POST /api/v1/training-sessions/{session_id}/exercises` – Add exercise to session
+- `GET /api/v1/training-sessions/{session_id}/exercises` – List session exercises
+- `GET /api/v1/training-sessions/exercises/{exercise_id}` – Get session exercise
+- `PUT /api/v1/training-sessions/exercises/{exercise_id}` – Update session exercise
+- `DELETE /api/v1/training-sessions/exercises/{exercise_id}` – Delete session exercise
+
+### Client Feedback
+- `POST /api/v1/training-sessions/{session_id}/feedback` – Create session feedback
+- `GET /api/v1/training-sessions/{session_id}/feedback` – Get session feedback
+- `GET /api/v1/training-sessions/feedback/client/{client_id}` – Get client feedback history
+- `PUT /api/v1/training-sessions/feedback/{feedback_id}` – Update feedback
+- `DELETE /api/v1/training-sessions/feedback/{feedback_id}` – Delete feedback
+
+### Progress Tracking
+- `POST /api/v1/training-sessions/progress` – Create progress tracking
+- `GET /api/v1/training-sessions/progress/client/{client_id}` – Get client progress
+- `GET /api/v1/training-sessions/progress/client/{client_id}/exercise/{exercise_id}` – Get exercise progress
+- `PUT /api/v1/training-sessions/progress/{progress_id}` – Update progress
+- `DELETE /api/v1/training-sessions/progress/{progress_id}` – Delete progress
+
+### Fatigue Analysis & Monitoring
+- `POST /api/v1/fatigue/fatigue-analysis/` – Create fatigue analysis
+- `GET /api/v1/fatigue/fatigue-analysis/` – List fatigue analysis (trainer-scoped)
+- `GET /api/v1/fatigue/fatigue-analysis/{analysis_id}` – Get fatigue analysis
+- `GET /api/v1/fatigue/clients/{client_id}/fatigue-analysis/` – Get client fatigue analysis
+- `PUT /api/v1/fatigue/fatigue-analysis/{analysis_id}` – Update fatigue analysis
+- `DELETE /api/v1/fatigue/fatigue-analysis/{analysis_id}` – Delete fatigue analysis
+
+### Fatigue Alerts
+- `POST /api/v1/fatigue/fatigue-alerts/` – Create fatigue alert
+- `GET /api/v1/fatigue/fatigue-alerts/` – List fatigue alerts (trainer-scoped)
+- `GET /api/v1/fatigue/fatigue-alerts/unread/` – List unread alerts (trainer-scoped)
+- `PUT /api/v1/fatigue/fatigue-alerts/{alert_id}/read` – Mark alert as read
+- `PUT /api/v1/fatigue/fatigue-alerts/{alert_id}/resolve` – Resolve alert
+
+### Workload Tracking
+- `POST /api/v1/fatigue/workload-tracking/` – Create workload tracking
+- `GET /api/v1/fatigue/clients/{client_id}/workload-tracking/` – Get client workload tracking
+- `GET /api/v1/fatigue/clients/{client_id}/fatigue-analytics/` – Get comprehensive fatigue analytics
 
 #### SMTP setup (optional, for reset emails)
 Add to `.env` (see `env.example`):
@@ -186,37 +287,12 @@ SMTP_USE_TLS=true
 
 When configured, forgot-password will send an email containing a reset link while still returning the token in development/testing.
 
-## 🔌 Frontend Integration Samples (Form → API → Response)
-
-Open these minimal HTML examples in a local static server and point them to your running API (production by default is set to `https://nexiaapp.com`).
-
-- Register: `backend/examples/forms/register.html`
-- Login: `backend/examples/forms/login.html`
-- Create Client Profile: `backend/examples/forms/client_profile.html`
-- Exercises Search/List: `backend/examples/forms/exercises.html`
-
-Run a quick local server to avoid browser CORS/security restrictions on file URLs:
-
-```bash
-cd backend
-python3 -m http.server 5500
-```
-
-Then visit:
-
-- http://localhost:5500/examples/forms/register.html
-- http://localhost:5500/examples/forms/login.html
-- http://localhost:5500/examples/forms/client_profile.html
-- http://localhost:5500/examples/forms/exercises.html
-
-If your backend enforces CORS, ensure `BACKEND_CORS_ORIGINS` includes `http://localhost:5500`.
-
 ## 🚀 Production Deployment
 
 ### Database Migration
 ```bash
-# For PostgreSQL
-DATABASE_URL="postgresql://user:password@localhost/nexia"
+# For PostgreSQL (use postgresql+psycopg2:// for SQLAlchemy 2.0+)
+DATABASE_URL="postgresql+psycopg2://user:password@localhost/nexia"
 
 # For MySQL
 DATABASE_URL="mysql://user:password@localhost/nexia"
@@ -231,12 +307,37 @@ alembic upgrade head
 - Configure secure `SECRET_KEY`
 - Set up proper `BACKEND_CORS_ORIGINS`
 
+### Deployment Steps (EC2/Production)
+```bash
+# 1. Pull latest code
+git pull origin main
+
+# 2. Activate virtual environment
+source venv/bin/activate
+
+# 3. Install/update dependencies
+pip install -r requirements.txt
+
+# 4. Run database migrations
+alembic upgrade head
+
+# 5. Restart service
+sudo systemctl restart nexia
+
+# 6. Check service status
+sudo systemctl status nexia
+
+# 7. Verify health
+curl https://yourdomain.com/health
+```
+
 ### Security Considerations
 - Use HTTPS in production
 - Configure proper CORS origins
 - Set up trusted hosts
 - Use environment-specific secret keys
 - Enable proper logging and monitoring
+- Ensure database indexes are created for performance
 
 ## 🤝 Contributing
 
