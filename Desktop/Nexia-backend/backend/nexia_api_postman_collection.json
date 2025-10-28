@@ -1,0 +1,1759 @@
+{
+  "info": {
+    "name": "Nexia Backend API - Complete",
+    "description": "Complete API collection for Nexia fitness training management system with ALL endpoints\n\n🔐 ROLE REQUIREMENTS (UPDATED - now correct for your business model):\n- Admin: Can access ALL endpoints including client deletion\n- Trainer: Can access most endpoints INCLUDING client creation/update/list/search\n- Athlete: Limited access to own data and feedback submission\n\n📝 FEEDBACK ENDPOINTS:\n- Create: Athletes can submit their own feedback\n- Read/Update/Delete: Only Trainers and Admins\n\n👥 CLIENT MANAGEMENT (FIXED):\n- Create/Update/List/Search: Trainer + Admin\n- Delete: Admin only (for security)\n- View: Client can see own profile, Trainer can see their clients, Admin can see all\n\n🧠 FATIGUE ANALYSIS SYSTEM (NEW):\n- Complete fatigue monitoring with automatic risk assessment\n- Smart recommendations and session adjustments\n- Fatigue alerts and workload tracking\n- Comprehensive client analytics and trends",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://nexiaapp.com/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "client_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "trainer_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "exercise_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "plan_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "session_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "fatigue_analysis_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "fatigue_alert_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "workload_tracking_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://nexiaapp.com/health",
+          "protocol": "https",
+          "host": ["nexiaapp.com"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register (trainer)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"trainer@test.com\",\n  \"password\": \"YourPass123\",\n  \"nombre\": \"Test\",\n  \"apellidos\": \"User\",\n  \"role\": \"trainer\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "register"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) {",
+                  "  pm.collectionVariables.set('user_id', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@test.com\",\n  \"password\": \"AdminPass123\",\n  \"nombre\": \"Admin\",\n  \"apellidos\": \"User\",\n  \"role\": \"admin\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Register (athlete)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"athlete@test.com\",\n  \"password\": \"AthletePass123\",\n  \"nombre\": \"Athlete\",\n  \"apellidos\": \"User\",\n  \"role\": \"athlete\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "trainer@test.com",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "YourPass123",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "login"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.access_token) {",
+                  "  pm.collectionVariables.set('access_token', json.access_token);",
+                  "}",
+                  "if (json && json.refresh_token) {",
+                  "  pm.collectionVariables.set('refresh_token', json.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/refresh",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "refresh"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.access_token) { pm.collectionVariables.set('access_token', json.access_token); }",
+                  "if (json && json.refresh_token) { pm.collectionVariables.set('refresh_token', json.refresh_token); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/logout",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "logout"]
+            }
+          }
+        },
+        {
+          "name": "Login (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "username", "value": "admin@test.com", "type": "text" },
+                { "key": "password", "value": "AdminPass123", "type": "text" }
+              ]
+            },
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "const json = pm.response.json();",
+                "if (json && json.access_token) { pm.collectionVariables.set('access_token', json.access_token); }"
+              ]}
+            }
+          ]
+        },
+        {
+          "name": "Login (athlete)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "username", "value": "athlete@test.com", "type": "text" },
+                { "key": "password", "value": "AthletePass123", "type": "text" }
+              ]
+            },
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "const json = pm.response.json();",
+                "if (json && json.access_token) { pm.collectionVariables.set('access_token', json.access_token); }"
+              ]}
+            }
+          ]
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "me"]
+            }
+          }
+        },
+        {
+          "name": "Forgot Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"trainer@test.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/forgot-password",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "forgot-password"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Exercises",
+      "item": [
+        {
+          "name": "Get All Exercises",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/exercises/",
+              "host": ["{{base_url}}"],
+              "path": ["exercises", ""]
+            }
+          }
+        },
+        {
+          "name": "Get Exercises with Filters",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/exercises/?tipo=Multiarticular&nivel=beginner&search=sentadilla",
+              "host": ["{{base_url}}"],
+              "path": ["exercises", ""],
+              "query": [
+                {
+                  "key": "tipo",
+                  "value": "fuerza"
+                },
+                {
+                  "key": "nivel",
+                  "value": "beginner"
+                },
+                {
+                  "key": "search",
+                  "value": "sentadilla"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Exercise",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"SQUAT_001\",\n  \"nombre\": \"Sentadilla\",\n  \"descripcion\": \"Ejercicio básico de piernas\",\n  \"tipo\": \"Multiarticular\",\n  \"categoria\": \"Básico\",\n  \"nivel\": \"beginner\",\n  \"equipo\": \"none\",\n  \"patron_movimiento\": \"dominante de rodilla\",\n  \"tipo_carga\": \"bodyweight\",\n  \"musculatura_principal\": \"cuadriceps, gluteos, isquiotibiales\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/",
+              "host": ["{{base_url}}"],
+              "path": ["exercises", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) {",
+                  "  pm.collectionVariables.set('exercise_id', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Exercise by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["exercises", "{{exercise_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Exercise by Exercise ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/exercises/by-exercise-id/SQUAT_001",
+              "host": ["{{base_url}}"],
+              "path": ["exercises", "by-exercise-id", "SQUAT_001"]
+            }
+          }
+        },
+        {
+          "name": "Update Exercise",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Sentadilla Updated\",\n  \"descripcion\": \"Ejercicio básico de piernas actualizado\",\n  \"tipo\": \"Multiarticular\",\n  \"categoria\": \"Básico\",\n  \"nivel\": \"intermediate\",\n  \"equipo\": \"none\",\n  \"patron_movimiento\": \"dominante de rodilla\",\n  \"tipo_carga\": \"bodyweight\",\n  \"musculatura_principal\": \"cuadriceps, gluteos, isquiotibiales, core\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["exercises", "{{exercise_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Exercise",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["exercises", "{{exercise_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Exercises by Muscle Group",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/exercises/by-muscle-group/cuadriceps",
+              "host": ["{{base_url}}"],
+              "path": ["exercises", "by-muscle-group", "cuadriceps"]
+            }
+          }
+        },
+        {
+          "name": "Get Exercises by Equipment",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/exercises/by-equipment/none",
+              "host": ["{{base_url}}"],
+              "path": ["exercises", "by-equipment", "none"]
+            }
+          }
+        },
+        {
+          "name": "Get Exercises by Level",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/exercises/by-level/beginner",
+              "host": ["{{base_url}}"],
+              "path": ["exercises", "by-level", "beginner"]
+            }
+          }
+        },
+        {
+          "name": "Get Exercise Statistics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/exercises/stats/summary",
+              "host": ["{{base_url}}"],
+              "path": ["exercises", "stats", "summary"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Clients",
+      "item": [
+        {
+          "name": "Create Client (Trainer/Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Juan\",\n  \"apellidos\": \"Pérez\",\n  \"mail\": \"juan.perez@test.com\",\n  \"telefono\": \"+34612345678\",\n  \"sexo\": \"Masculino\",\n  \"fecha_alta\": \"2025-01-15\",\n  \"edad\": 30,\n  \"peso\": 75.5,\n  \"altura\": 1.75,\n  \"objetivo_entrenamiento\": \"Pérdida de peso\",\n  \"experiencia\": \"Baja\",\n  \"frecuencia_semanal\": \"Baja\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/clients/",
+              "host": ["{{base_url}}"],
+              "path": ["clients", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) {",
+                  "  pm.collectionVariables.set('client_id', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get All Clients (Trainer/Admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/clients/",
+              "host": ["{{base_url}}"],
+              "path": ["clients", ""]
+            }
+          }
+        },
+        {
+          "name": "Get Client by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/clients/{{client_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["clients", "{{client_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Search Clients (Trainer/Admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/clients/search?search=juan&age_min=25&age_max=35&training_goal=muscle_gain",
+              "host": ["{{base_url}}"],
+              "path": ["clients", "search"],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "juan"
+                },
+                {
+                  "key": "age_min",
+                  "value": "25"
+                },
+                {
+                  "key": "age_max",
+                  "value": "35"
+                },
+                {
+                  "key": "training_goal",
+                  "value": "muscle_gain"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Client (Trainer/Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Juan Updated\",\n  \"apellidos\": \"Pérez Updated\",\n  \"mail\": \"juan.updated@test.com\",\n  \"telefono\": \"+34612345678\",\n  \"sexo\": \"Masculino\",\n  \"edad\": 31,\n  \"peso\": 76.0,\n  \"altura\": 1.75,\n  \"objetivo_entrenamiento\": \"Aumentar masa muscular\",\n  \"experiencia\": \"Media\",\n  \"frecuencia_semanal\": \"Media\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/clients/{{client_id}}",
+              "path": ["clients", "{{client_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Client (Admin Only)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/clients/{{client_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["clients", "{{client_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Trainers",
+      "item": [
+        {
+          "name": "Create Trainer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"María\",\n  \"apellidos\": \"García\",\n  \"mail\": \"maria.garcia@test.com\",\n  \"telefono\": \"+34687654321\",\n  \"especialidad\": \"fuerza\",\n  \"experiencia_anos\": 5,\n  \"certificaciones\": \"NSCA-CPT, FMS Level 1\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/trainers/",
+              "host": ["{{base_url}}"],
+              "path": ["trainers", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) {",
+                  "  pm.collectionVariables.set('trainer_id', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get All Trainers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/trainers/",
+              "host": ["{{base_url}}"],
+              "path": ["trainers", ""]
+            }
+          }
+        },
+        {
+          "name": "Get Trainer by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/trainers/{{trainer_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["trainers", "{{trainer_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Trainer",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"María Updated\",\n  \"apellidos\": \"García Updated\",\n  \"mail\": \"maria.updated@test.com\",\n  \"telefono\": \"+34687654321\",\n  \"especialidad\": \"cardio\",\n  \"experiencia_anos\": 6,\n  \"certificaciones\": \"NSCA-CPT, FMS Level 1, ACE\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/trainers/{{trainer_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["trainers", "{{trainer_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Trainer",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/trainers/{{trainer_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["trainers", "{{trainer_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Link Trainer to Client",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw"
+            },
+            "url": {
+              "raw": "{{base_url}}/trainers/{{trainer_id}}/clients/{{client_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["trainers", "{{trainer_id}}", "clients", "{{client_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Unlink Trainer from Client",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/trainers/{{trainer_id}}/clients/{{client_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["trainers", "{{trainer_id}}", "clients", "{{client_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Trainer Clients",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/trainers/{{trainer_id}}/clients",
+              "host": ["{{base_url}}"],
+              "path": ["trainers", "{{trainer_id}}", "clients"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Training Plans",
+      "item": [
+        {
+          "name": "Create Training Plan",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"trainer_id\": \"{{trainer_id}}\",\n  \"client_id\": \"{{client_id}}\",\n  \"name\": \"Plan de Fuerza 12 Semanas\",\n  \"description\": \"Plan estructurado para mejorar la fuerza\",\n  \"start_date\": \"2025-01-15\",\n  \"end_date\": \"2025-04-15\",\n  \"goal\": \"Muscle Gain\",\n  \"status\": \"active\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/training-plans/",
+              "host": ["{{base_url}}"],
+              "path": ["training-plans", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) {",
+                  "  pm.collectionVariables.set('plan_id', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Training Plans",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/training-plans/?trainer_id={{trainer_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["training-plans", ""],
+              "query": [
+                {
+                  "key": "trainer_id",
+                  "value": "{{trainer_id}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Training Plan by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/training-plans/{{plan_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["training-plans", "{{plan_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Training Plan",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Plan de Fuerza 12 Semanas Updated\",\n  \"description\": \"Plan estructurado actualizado\",\n  \"start_date\": \"2025-01-15\",\n  \"end_date\": \"2025-04-15\",\n  \"goal\": \"Muscle Gain\",\n  \"status\": \"active\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/training-plans/{{plan_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["training-plans", "{{plan_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Training Plan",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/training-plans/{{plan_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["training-plans", "{{plan_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Create Macrocycle",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Macrociclo 1: Fuerza Base\",\n  \"descripcion\": \"Desarrollo de fuerza base\",\n  \"duracion_semanas\": 4,\n  \"objetivo\": \"desarrollo_fuerza_base\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/training-plans/{{plan_id}}/macrocycles",
+              "host": ["{{base_url}}"],
+              "path": ["training-plans", "{{plan_id}}", "macrocycles"]
+            }
+          }
+        },
+        {
+          "name": "Get Macrocycles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/training-plans/{{plan_id}}/macrocycles",
+              "host": ["{{base_url}}"],
+              "path": ["training-plans", "{{plan_id}}", "macrocycles"]
+            }
+          }
+        },
+        {
+          "name": "Create Mesocycle",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Mesociclo 1: Adaptación\",\n  \"descripcion\": \"Adaptación al entrenamiento\",\n  \"duracion_semanas\": 2,\n  \"objetivo\": \"adaptacion_neural\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/training-plans/macrocycles/1/mesocycles",
+              "host": ["{{base_url}}"],
+              "path": ["training-plans", "macrocycles", "1", "mesocycles"]
+            }
+          }
+        },
+        {
+          "name": "Create Microcycle",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Microciclo 1: Semana 1\",\n  \"descripcion\": \"Primera semana de entrenamiento\",\n  \"duracion_dias\": 7,\n  \"objetivo\": \"introduccion_ejercicios\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/training-plans/mesocycles/1/microcycles",
+              "host": ["{{base_url}}"],
+              "path": ["training-plans", "mesocycles", "1", "microcycles"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Training Sessions",
+      "item": [
+        {
+          "name": "Create Training Session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"microcycle_id\": 1,\n  \"session_name\": \"Entrenamiento A\",\n  \"session_type\": \"fuerza\",\n  \"planned_duration\": 60,\n  \"session_date\": \"2025-01-15\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/training-sessions/",
+              "host": ["{{base_url}}"],
+              "path": ["training-sessions", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) {",
+                  "  pm.collectionVariables.set('session_id', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Training Sessions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/training-sessions/?microcycle_id=1",
+              "host": ["{{base_url}}"],
+              "path": ["training-sessions", ""],
+              "query": [
+                {
+                  "key": "microcycle_id",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Training Session by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/training-sessions/{{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["training-sessions", "{{session_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Training Session",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_name\": \"Entrenamiento A Updated\",\n  \"session_type\": \"cardio\",\n  \"planned_duration\": 45,\n  \"session_date\": \"2025-01-15\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/training-sessions/{{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["training-sessions", "{{session_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Training Session",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/training-sessions/{{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["training-sessions", "{{session_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Add Exercise to Training Session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{exercise_id}}\",\n  \"order_in_session\": 1,\n  \"series\": 3,\n  \"repeticiones\": 10,\n  \"peso\": 50.0,\n  \"descanso_segundos\": 90,\n  \"notas\": \"Mantener técnica correcta\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/training-sessions/{{session_id}}/exercises",
+              "host": ["{{base_url}}"],
+              "path": ["training-sessions", "{{session_id}}", "exercises"]
+            }
+          }
+        },
+        {
+          "name": "Get Session Exercises",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/training-sessions/{{session_id}}/exercises",
+              "host": ["{{base_url}}"],
+              "path": ["training-sessions", "{{session_id}}", "exercises"]
+            }
+          }
+        },
+        {
+          "name": "Add Client Feedback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_id\": \"{{client_id}}\",\n  \"satisfaccion\": 4,\n  \"dificultad\": 3,\n  \"comentarios\": \"Sesión muy intensa pero efectiva\",\n  \"completado\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/training-sessions/{{session_id}}/feedback",
+              "host": ["{{base_url}}"],
+              "path": ["training-sessions", "{{session_id}}", "feedback"]
+            }
+          }
+        },
+        {
+          "name": "Get Session Feedback",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/training-sessions/{{session_id}}/feedback",
+              "host": ["{{base_url}}"],
+              "path": ["training-sessions", "{{session_id}}", "feedback"]
+            }
+          }
+        },
+
+         {
+           "name": "Get Client Feedback History",
+           "request": {
+             "method": "GET",
+             "header": [],
+             "url": {
+               "raw": "{{base_url}}/training-sessions/feedback/client/{{client_id}}",
+               "host": ["{{base_url}}"],
+               "path": ["training-sessions", "feedback", "client", "{{client_id}}"]
+             }
+           }
+         },
+         {
+           "name": "Get Feedback by ID",
+           "request": {
+             "method": "GET",
+             "header": [],
+             "url": {
+               "raw": "{{base_url}}/training-sessions/feedback/1",
+               "host": ["{{base_url}}"],
+               "path": ["training-sessions", "feedback", "1"]
+             }
+           }
+         },
+         {
+           "name": "Update Client Feedback (Trainer/Admin)",
+           "request": {
+             "method": "PUT",
+             "header": [
+               {
+                 "key": "Content-Type",
+                 "value": "application/json"
+               }
+             ],
+             "body": {
+               "mode": "raw",
+               "raw": "{\n  \"satisfaccion\": 5,\n  \"dificultad\": 2,\n  \"comentarios\": \"Feedback actualizado\",\n  \"completado\": true\n}"
+             },
+             "url": {
+               "raw": "{{base_url}}/training-sessions/feedback/1",
+               "host": ["{{base_url}}"],
+               "path": ["training-sessions", "feedback", "1"]
+             }
+           }
+         },
+         {
+           "name": "Delete Client Feedback (Trainer/Admin)",
+           "request": {
+             "method": "DELETE",
+             "header": [],
+             "url": {
+               "raw": "{{base_url}}/training-sessions/feedback/1",
+               "host": ["{{base_url}}"],
+               "path": ["training-sessions", "feedback", "1"]
+             }
+           }
+         }
+      ]
+    },
+    {
+      "name": "Standalone Sessions",
+      "item": [
+        {
+          "name": "Create Standalone Session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"trainer_id\": \"{{trainer_id}}\",\n  \"client_id\": \"{{client_id}}\",\n  \"session_date\": \"2025-01-15\",\n  \"session_name\": \"Sesión Rápida de Cardio\",\n  \"session_type\": \"cardio\",\n  \"planned_duration\": 45,\n  \"notes\": \"Sesión de emergencia para cliente\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/standalone-sessions/",
+              "host": ["{{base_url}}"],
+              "path": ["standalone-sessions", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) { pm.collectionVariables.set('session_id', json.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Standalone Sessions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/standalone-sessions/?trainer_id={{trainer_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["standalone-sessions", ""],
+              "query": [
+                {
+                  "key": "trainer_id",
+                  "value": "{{trainer_id}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Standalone Session by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/standalone-sessions/{{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["standalone-sessions", "{{session_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Standalone Session",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_name\": \"Sesión Rápida de Cardio Updated\",\n  \"session_type\": \"fuerza\",\n  \"planned_duration\": 60,\n  \"notes\": \"Sesión actualizada\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/standalone-sessions/{{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["standalone-sessions", "{{session_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Standalone Session",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/standalone-sessions/{{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["standalone-sessions", "{{session_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Add Exercise to Standalone Session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{exercise_id}}\",\n  \"order_in_session\": 1,\n  \"series\": 3,\n  \"repeticiones\": 12,\n  \"peso\": 40.0,\n  \"descanso_segundos\": 60,\n  \"notas\": \"Enfoque en técnica\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/standalone-sessions/{{session_id}}/exercises",
+              "host": ["{{base_url}}"],
+              "path": ["standalone-sessions", "{{session_id}}", "exercises"]
+            }
+          }
+        },
+        {
+          "name": "Get Standalone Session Exercises",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/standalone-sessions/{{session_id}}/exercises",
+              "host": ["{{base_url}}"],
+              "path": ["standalone-sessions", "{{session_id}}", "exercises"]
+            }
+          }
+        },
+        {
+          "name": "Add Feedback to Standalone Session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_id\": \"{{client_id}}\",\n  \"satisfaccion\": 5,\n  \"dificultad\": 2,\n  \"comentarios\": \"Perfecta sesión rápida\",\n  \"completado\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/standalone-sessions/{{session_id}}/feedback",
+              "host": ["{{base_url}}"],
+              "path": ["standalone-sessions", "{{session_id}}", "feedback"]
+            }
+          }
+        },
+                 {
+           "name": "Get Standalone Session Feedback",
+           "request": {
+             "method": "GET",
+             "header": [],
+             "url": {
+               "raw": "{{base_url}}/standalone-sessions/{{session_id}}/feedback",
+               "host": ["{{base_url}}"],
+               "path": ["standalone-sessions", "{{session_id}}", "feedback"]
+             }
+           }
+         },
+         {
+           "name": "Update Standalone Session Feedback (Trainer/Admin)",
+           "request": {
+             "method": "PUT",
+             "header": [
+               {
+                 "key": "Content-Type",
+                 "value": "application/json"
+               }
+             ],
+             "body": {
+               "mode": "raw",
+               "raw": "{\n  \"satisfaccion\": 5,\n  \"dificultad\": 1,\n  \"comentarios\": \"Feedback actualizado\",\n  \"completado\": true\n}"
+             },
+             "url": {
+               "raw": "{{base_url}}/standalone-sessions/feedback/1",
+               "host": ["{{base_url}}"],
+               "path": ["standalone-sessions", "feedback", "1"]
+             }
+           }
+         },
+         {
+           "name": "Delete Standalone Session Feedback (Trainer/Admin)",
+           "request": {
+             "method": "DELETE",
+             "header": [],
+             "url": {
+               "raw": "{{base_url}}/standalone-sessions/feedback/1",
+               "host": ["{{base_url}}"],
+               "path": ["standalone-sessions", "feedback", "1"]
+             }
+           }
+         }
+      ]
+    },
+    {
+      "name": "Progress Tracking",
+      "item": [
+        {
+          "name": "Create Progress Record",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_id\": \"{{client_id}}\",\n  \"exercise_id\": \"{{exercise_id}}\",\n  \"fecha_registro\": \"2025-01-15\",\n  \"peso\": 50.0,\n  \"repeticiones\": 10,\n  \"series\": 3,\n  \"notas\": \"Progreso notable\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/progress/",
+              "host": ["{{base_url}}"],
+              "path": ["progress", ""]
+            }
+          }
+        },
+        {
+          "name": "Get All Progress Records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/progress/",
+              "host": ["{{base_url}}"],
+              "path": ["progress", ""]
+            }
+          }
+        },
+        {
+          "name": "Get Progress by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/progress/1",
+              "host": ["{{base_url}}"],
+              "path": ["progress", "1"]
+            }
+          }
+        },
+        {
+          "name": "Update Progress Record",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"peso\": 55.0,\n  \"repeticiones\": 12,\n  \"series\": 4,\n  \"notas\": \"Progreso excelente\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/progress/1",
+              "host": ["{{base_url}}"],
+              "path": ["progress", "1"]
+            }
+          }
+        },
+        {
+          "name": "Delete Progress Record",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/progress/1",
+              "host": ["{{base_url}}"],
+              "path": ["progress", "1"]
+            }
+          }
+        },
+        {
+          "name": "Get Progress by Client",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/progress/?client_id={{client_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["progress", ""],
+              "query": [
+                {
+                  "key": "client_id",
+                  "value": "{{client_id}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Progress Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/progress/analytics/{{client_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["progress", "analytics", "{{client_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fatigue Analysis & Monitoring",
+      "description": "Complete fatigue analysis system with automatic risk assessment, alerts, and workload tracking",
+      "item": [
+        {
+          "name": "Create Fatigue Analysis",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_id\": {{client_id}},\n  \"session_type\": \"training\",\n  \"analysis_date\": \"2025-09-01\",\n  \"pre_fatigue_level\": 3,\n  \"pre_energy_level\": 8,\n  \"pre_motivation_level\": 7,\n  \"pre_sleep_quality\": 6,\n  \"pre_stress_level\": 4,\n  \"pre_muscle_soreness\": \"None\",\n  \"post_fatigue_level\": 7,\n  \"post_energy_level\": 4,\n  \"post_motivation_level\": 6,\n  \"post_muscle_soreness\": \"Upper body\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/fatigue/fatigue-analysis/",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "fatigue-analysis", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) {",
+                  "  pm.collectionVariables.set('fatigue_analysis_id', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get All Fatigue Analyses",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fatigue/fatigue-analysis/",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "fatigue-analysis", ""]
+            }
+          }
+        },
+        {
+          "name": "Get Fatigue Analysis by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fatigue/fatigue-analysis/{{fatigue_analysis_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "fatigue-analysis", "{{fatigue_analysis_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Fatigue Analysis",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"post_fatigue_level\": 6,\n  \"post_energy_level\": 5,\n  \"notes\": \"Client felt better after session\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/fatigue/fatigue-analysis/{{fatigue_analysis_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "fatigue-analysis", "{{fatigue_analysis_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Fatigue Analysis",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fatigue/fatigue-analysis/{{fatigue_analysis_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "fatigue-analysis", "{{fatigue_analysis_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Client Fatigue Analysis History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fatigue/clients/{{client_id}}/fatigue-analysis/",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "clients", "{{client_id}}", "fatigue-analysis", ""]
+            }
+          }
+        },
+        {
+          "name": "Get Client Fatigue Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fatigue/clients/{{client_id}}/fatigue-analytics/?days=30",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "clients", "{{client_id}}", "fatigue-analytics", ""],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "30"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Fatigue Alert",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_id\": {{client_id}},\n  \"trainer_id\": {{trainer_id}},\n  \"alert_type\": \"overtraining\",\n  \"severity\": \"high\",\n  \"title\": \"High Fatigue Alert\",\n  \"message\": \"Client showing signs of overtraining\",\n  \"recommendations\": \"Reduce intensity and add recovery day\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/fatigue/fatigue-alerts/",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "fatigue-alerts", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) {",
+                  "  pm.collectionVariables.set('fatigue_alert_id', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get All Fatigue Alerts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fatigue/fatigue-alerts/",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "fatigue-alerts", ""]
+            }
+          }
+        },
+        {
+          "name": "Get Unread Fatigue Alerts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fatigue/fatigue-alerts/unread/",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "fatigue-alerts", "unread", ""]
+            }
+          }
+        },
+        {
+          "name": "Mark Alert as Read",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fatigue/fatigue-alerts/{{fatigue_alert_id}}/read",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "fatigue-alerts", "{{fatigue_alert_id}}", "read"]
+            }
+          }
+        },
+        {
+          "name": "Resolve Fatigue Alert",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resolution_notes\": \"Client recovered well after rest day\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/fatigue/fatigue-alerts/{{fatigue_alert_id}}/resolve",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "fatigue-alerts", "{{fatigue_alert_id}}", "resolve"]
+            }
+          }
+        },
+        {
+          "name": "Create Workload Tracking",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_id\": {{client_id}},\n  \"tracking_date\": \"2025-09-01\",\n  \"total_volume\": 1500,\n  \"total_duration\": 60,\n  \"intensity_score\": 7.5,\n  \"perceived_exertion_avg\": 8.0\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/fatigue/workload-tracking/",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "workload-tracking", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) {",
+                  "  pm.collectionVariables.set('workload_tracking_id', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Client Workload Tracking",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fatigue/clients/{{client_id}}/workload-tracking/",
+              "host": ["{{base_url}}"],
+              "path": ["fatigue", "clients", "{{client_id}}", "workload-tracking", ""]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

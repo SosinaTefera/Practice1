@@ -1,0 +1,20 @@
+[flake8]
+max-line-length = 88
+extend-ignore = E203, W503
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    .pytest_cache,
+    build,
+    dist,
+    *.egg-info,
+    alembic/versions,
+    **/alembic/versions/**
+per-file-ignores =
+    __init__.py:F401
+    alembic/env.py:E402,F401
+    import_exercises.py:E402,F401,E501
+    clean_duplicate_data.py:E501
+    tests/*:E501,F401,F541,E402,E722
