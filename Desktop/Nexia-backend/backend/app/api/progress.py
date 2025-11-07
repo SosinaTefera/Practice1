@@ -105,9 +105,16 @@ def get_progress_analytics(client_id: int, db: Session = Depends(get_db)):
     )
 
     if not progress_records:
-        raise HTTPException(
-            status_code=404, detail="No progress records found for this client"
-        )
+        return {
+            "client_id": client_id,
+            "total_records": 0,
+            "first_record_date": None,
+            "latest_record_date": None,
+            "weight_change_kg": None,
+            "bmi_change": None,
+            "progress_trend": "no_data",
+            "progress_records": [],
+        }
 
     # Calculate analytics
     total_records = len(progress_records)
@@ -116,17 +123,17 @@ def get_progress_analytics(client_id: int, db: Session = Depends(get_db)):
 
     # Weight changes
     weight_change = None
-    if first_record.peso and latest_record.peso:
+    if first_record.peso is not None and latest_record.peso is not None:
         weight_change = latest_record.peso - first_record.peso
 
     # BMI changes
     bmi_change = None
-    if first_record.imc and latest_record.imc:
+    if first_record.imc is not None and latest_record.imc is not None:
         bmi_change = latest_record.imc - first_record.imc
 
     # Progress trend
     progress_trend = "stable"
-    if weight_change:
+    if weight_change is not None:
         if weight_change < -1:  # Weight loss
             progress_trend = "losing_weight"
         elif weight_change > 1:  # Weight gain
