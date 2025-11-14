@@ -2,6 +2,7 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     Date,
@@ -232,6 +233,9 @@ class ClientProfile(BaseModel):
     )
     progress_tracking = relationship("ProgressTracking", back_populates="client")
     fatigue_analysis = relationship("FatigueAnalysis", back_populates="client")
+    training_plan_instances = relationship(
+        "TrainingPlanInstance", back_populates="client"
+    )
 
     # Indexes
     __table_args__ = (
@@ -268,6 +272,12 @@ class Trainer(Base):
     clients = relationship("ClientProfile", secondary="trainer_clients")
     routines = relationship("ClientRoutine", back_populates="trainer")
     training_plans = relationship("TrainingPlan", back_populates="trainer")
+    training_plan_templates = relationship(
+        "TrainingPlanTemplate", back_populates="trainer"
+    )
+    training_plan_instances = relationship(
+        "TrainingPlanInstance", back_populates="trainer"
+    )
     training_sessions = relationship("TrainingSession", back_populates="trainer")
     standalone_sessions = relationship("StandaloneSession", back_populates="trainer")
     # New session programming relationships
@@ -422,6 +432,35 @@ class ClientProgress(BaseModel):
     )  # Input unit (metric/imperial)
     imc = Column(Float, nullable=True)
     notas = Column(Text, nullable=True)
+    fecha_inicio_prueba = Column(Date, nullable=True)
+
+    # Anthropometric Data - Skinfolds (in mm)
+    skinfold_triceps = Column(Float, nullable=True)
+    skinfold_subscapular = Column(Float, nullable=True)
+    skinfold_biceps = Column(Float, nullable=True)
+    skinfold_iliac_crest = Column(Float, nullable=True)
+    skinfold_supraspinal = Column(Float, nullable=True)
+    skinfold_abdominal = Column(Float, nullable=True)
+    skinfold_thigh = Column(Float, nullable=True)
+    skinfold_calf = Column(Float, nullable=True)
+
+    # Anthropometric Data - Girths (in cm)
+    girth_relaxed_arm = Column(Float, nullable=True)
+    girth_flexed_contracted_arm = Column(Float, nullable=True)
+    girth_waist_minimum = Column(Float, nullable=True)
+    girth_hips_maximum = Column(Float, nullable=True)
+    girth_medial_thigh = Column(Float, nullable=True)
+    girth_maximum_calf = Column(Float, nullable=True)
+
+    # Anthropometric Data - Diameters (in cm)
+    diameter_humerus_biepicondylar = Column(Float, nullable=True)
+    diameter_femur_bicondylar = Column(Float, nullable=True)
+    diameter_bi_styloid_wrist = Column(Float, nullable=True)
+
+    # Body Composition Calculated Fields
+    body_fat_percentage = Column(Float, nullable=True)
+    muscle_mass_kg = Column(Float, nullable=True)
+    fat_free_mass_kg = Column(Float, nullable=True)
 
     # Relationships
     client = relationship("ClientProfile", back_populates="progress_records")
@@ -433,11 +472,55 @@ class ClientProgress(BaseModel):
 
 
 # Training Planning Models
+class MilestoneTypeEnum(str, enum.Enum):
+    start = "start"
+    test = "test"
+    competition = "competition"
+    end = "end"
+    custom = "custom"
+
+
+class TrainingPlanTemplate(BaseModel):
+    """Reusable training plan templates without client assignment"""
+
+    __tablename__ = "training_plan_templates"
+
+    trainer_id = Column(Integer, ForeignKey("trainers.id"), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    goal = Column(
+        String(255), nullable=False
+    )  # e.g., "Muscle Gain", "Fat Loss", "Performance"
+    category = Column(String(100), nullable=True)  # e.g., "hipertrofia", "fuerza"
+    tags = Column(JSON, nullable=True)  # e.g., ["principiante", "casa", "gimnasio"]
+    estimated_duration_weeks = Column(Integer, nullable=True)
+    usage_count = Column(Integer, default=0, nullable=False)
+    success_rate = Column(Float, nullable=True)  # Percentage of success (0-100)
+    is_template = Column(Boolean, default=True, nullable=False)
+    is_public = Column(
+        Boolean, default=False, nullable=False
+    )  # Share with other trainers
+
+    # Relationships
+    trainer = relationship("Trainer", back_populates="training_plan_templates")
+    macrocycles = relationship(
+        "Macrocycle",
+        foreign_keys="[Macrocycle.template_id]",
+        back_populates="template",
+        cascade="all, delete-orphan",
+    )
+    instances = relationship(
+        "TrainingPlanInstance", back_populates="template", cascade="all, delete-orphan"
+    )
+
+
 class TrainingPlan(BaseModel):
     __tablename__ = "training_plans"
 
     trainer_id = Column(Integer, ForeignKey("trainers.id"), nullable=False)
-    client_id = Column(Integer, ForeignKey("client_profiles.id"), nullable=False)
+    client_id = Column(
+        Integer, ForeignKey("client_profiles.id"), nullable=True
+    )  # Made optional
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     start_date = Column(Date, nullable=False)
@@ -446,12 +529,65 @@ class TrainingPlan(BaseModel):
         String(255), nullable=False
     )  # e.g., "Muscle Gain", "Fat Loss", "Performance"
     status = Column(String(50), default="active")  # active, completed, paused
+    # New fields for template system
+    template_id = Column(
+        Integer, ForeignKey("training_plan_templates.id"), nullable=True
+    )
+    is_template = Column(Boolean, default=False, nullable=False)
+    can_be_reused = Column(Boolean, default=True, nullable=False)
+    was_converted_to_template = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     trainer = relationship("Trainer", back_populates="training_plans")
     client = relationship("ClientProfile", back_populates="training_plans")
+    template = relationship("TrainingPlanTemplate", foreign_keys=[template_id])
+    instances = relationship(
+        "TrainingPlanInstance",
+        foreign_keys="TrainingPlanInstance.source_plan_id",
+        back_populates="source_plan",
+    )
     macrocycles = relationship(
         "Macrocycle", back_populates="training_plan", cascade="all, delete-orphan"
+    )
+    milestones = relationship(
+        "Milestone", back_populates="training_plan", cascade="all, delete-orphan"
+    )
+
+
+class TrainingPlanInstance(BaseModel):
+    """Active training plan instances assigned to clients"""
+
+    __tablename__ = "training_plan_instances"
+
+    # References (one or the other, not both)
+    template_id = Column(
+        Integer, ForeignKey("training_plan_templates.id"), nullable=True
+    )
+    source_plan_id = Column(Integer, ForeignKey("training_plans.id"), nullable=True)
+    # Client and trainer
+    client_id = Column(Integer, ForeignKey("client_profiles.id"), nullable=False)
+    trainer_id = Column(Integer, ForeignKey("trainers.id"), nullable=False)
+    # Information specific to this client
+    name = Column(String(255), nullable=False)  # Can be different from original
+    description = Column(Text, nullable=True)
+    start_date = Column(Date, nullable=False)  # Customized dates
+    end_date = Column(Date, nullable=False)
+    goal = Column(String(255), nullable=False)
+    status = Column(String(50), default="active")  # active, completed, paused
+    # Personalizations
+    customizations = Column(JSON, nullable=True)  # Client-specific changes
+    assigned_at = Column(DateTime, default=func.now(), nullable=False)
+
+    # Relationships
+    template = relationship("TrainingPlanTemplate", back_populates="instances")
+    source_plan = relationship("TrainingPlan", foreign_keys=[source_plan_id])
+    client = relationship("ClientProfile", back_populates="training_plan_instances")
+    trainer = relationship("Trainer", back_populates="training_plan_instances")
+    macrocycles = relationship(
+        "Macrocycle",
+        foreign_keys="[Macrocycle.instance_id]",
+        back_populates="instance",
+        cascade="all, delete-orphan",
     )
 
 
@@ -459,7 +595,14 @@ class Macrocycle(BaseModel):
     __tablename__ = "macrocycles"
 
     id = Column(Integer, primary_key=True, index=True)
-    training_plan_id = Column(Integer, ForeignKey("training_plans.id"), nullable=False)
+    # Support for templates, instances, and regular plans (Option B)
+    training_plan_id = Column(Integer, ForeignKey("training_plans.id"), nullable=True)
+    template_id = Column(
+        Integer, ForeignKey("training_plan_templates.id"), nullable=True
+    )
+    instance_id = Column(
+        Integer, ForeignKey("training_plan_instances.id"), nullable=True
+    )
     name = Column(
         String(255), nullable=False
     )  # e.g., "Preparation Phase", "Competition Phase"
@@ -469,9 +612,15 @@ class Macrocycle(BaseModel):
     focus = Column(
         String(255), nullable=False
     )  # e.g., "Strength", "Endurance", "Power"
+    # Coherence system fields (Adrián's requirement)
+    physical_quality = Column(
+        String(255), nullable=True
+    )  # e.g., "Fuerza", "Power", "Aerobic", "Mobility" (replaces focus in coherence)
+    volume = Column(Float, nullable=True)  # Float 1-10 for coherence calculation
+    intensity = Column(Float, nullable=True)  # Float 1-10 for coherence calculation
     volume_intensity_ratio = Column(
         String(50), nullable=True
-    )  # e.g., "High Volume, Low Intensity"
+    )  # e.g., "High Volume, Low Intensity" (kept for backward compatibility)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,
@@ -482,6 +631,8 @@ class Macrocycle(BaseModel):
 
     # Relationships
     training_plan = relationship("TrainingPlan", back_populates="macrocycles")
+    template = relationship("TrainingPlanTemplate", back_populates="macrocycles")
+    instance = relationship("TrainingPlanInstance", back_populates="macrocycles")
     mesocycles = relationship(
         "Mesocycle", back_populates="macrocycle", cascade="all, delete-orphan"
     )
@@ -501,10 +652,16 @@ class Mesocycle(BaseModel):
         String(255), nullable=False
     )  # e.g., "Maximal Strength", "Muscular Endurance"
     secondary_focus = Column(String(255), nullable=True)
-    target_volume = Column(String(50), nullable=True)  # e.g., "High", "Medium", "Low"
+    # Coherence system fields (Adrián's requirement)
+    physical_quality = Column(
+        String(255), nullable=True
+    )  # e.g., "Fuerza", "Power", "Aerobic", "Mobility"
+    volume = Column(Float, nullable=True)  # Float 1-10 for coherence calculation
+    intensity = Column(Float, nullable=True)  # Float 1-10 for coherence calculation
+    target_volume = Column(String(50), nullable=True)  # e.g., "High", "Medium", "Low" (kept for backward compatibility)
     target_intensity = Column(
         String(50), nullable=True
-    )  # e.g., "High", "Medium", "Low"
+    )  # e.g., "High", "Medium", "Low" (kept for backward compatibility)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,
@@ -533,6 +690,12 @@ class Microcycle(BaseModel):
     training_frequency = Column(Integer, nullable=False, default=3)  # sessions per week
     deload_week = Column(Boolean, default=False)
     notes = Column(Text, nullable=True)
+    # Coherence system fields (Adrián's requirement)
+    physical_quality = Column(
+        String(255), nullable=True
+    )  # e.g., "Fuerza", "Power", "Aerobic", "Mobility"
+    volume = Column(Float, nullable=True)  # Float 1-10 for coherence calculation
+    intensity = Column(Float, nullable=True)  # Float 1-10 for coherence calculation
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,
@@ -606,6 +769,30 @@ class TrainingSession(BaseModel):
         Index("idx_training_session_coach_client", "trainer_id", "client_id"),
         Index("idx_training_session_date", "session_date"),
         Index("idx_training_session_status", "status"),
+    )
+
+
+class Milestone(BaseModel):
+    __tablename__ = "milestones"
+
+    training_plan_id = Column(Integer, ForeignKey("training_plans.id"), nullable=False)
+    title = Column(String(255), nullable=False)
+    milestone_date = Column(Date, nullable=False)
+    type = Column(
+        Enum(MilestoneTypeEnum), nullable=False, default=MilestoneTypeEnum.custom
+    )
+    notes = Column(Text, nullable=True)
+    importance = Column(String(50), default="medium")  # low, medium, high
+    reminder_offset_days = Column(Integer, nullable=True)  # days before to remind
+    done = Column(Boolean, default=False)
+
+    # Relationships
+    training_plan = relationship("TrainingPlan", back_populates="milestones")
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_milestone_plan_date", "training_plan_id", "milestone_date"),
+        Index("idx_milestone_done", "done"),
     )
 
 

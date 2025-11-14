@@ -1,17 +1,21 @@
-from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from datetime import date, datetime, timedelta, timezone
+from typing import Dict, List, Optional
 
 from sqlalchemy import func, or_, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, noload
 
 from . import schemas
 from .auth import models as auth_models
 from .auth import schemas as auth_schemas
 from .auth import utils as auth_utils
+from .core.config import settings
 from .db import models
 
 
-def create_client_profile(db: Session, profile_data: schemas.ClientProfileCreate):
+def create_client_profile(
+    db: Session, profile_data: schemas.ClientProfileCreate, commit: bool = True
+):
+    """Create client profile. If commit=False, caller handles transaction."""
     # Calculate BMI if weight and height are provided
     # Height is now in cm, so convert to meters for BMI calculation
     imc = None
@@ -23,8 +27,9 @@ def create_client_profile(db: Session, profile_data: schemas.ClientProfileCreate
         **profile_data.model_dump(exclude_unset=True), imc=imc
     )
     db.add(db_profile)
-    db.commit()
-    db.refresh(db_profile)
+    if commit:
+        db.commit()
+        db.refresh(db_profile)
     return db_profile
 
 
@@ -383,7 +388,7 @@ def delete_client_profile(db: Session, client_id: int) -> bool:
             )
 
             db.add(user)
-            db.commit()
+    db.commit()
 
     # Soft delete: mark client profile as inactive
     db_profile.is_active = False
@@ -882,7 +887,23 @@ def create_user(db: Session, user_data: auth_schemas.UserCreate):
             .first()
         )
         if trainer:
-            trainer.user_id = db_user.id
+            # Environment-based behavior:
+            # - Production: Reuse existing profile (preserve history/audit trail)
+            # - Dev/Test: Only reuse if profile is active (clean onboarding tests)
+            if settings.is_production or trainer.is_active:
+                trainer.user_id = db_user.id
+                # Reactivate if it was soft-deleted
+                if not trainer.is_active:
+                    trainer.is_active = True
+            else:
+                # In dev/test, create new profile if old one is inactive
+                trainer = models.Trainer(
+                    user_id=db_user.id,
+                    nombre=user_data.nombre,
+                    apellidos=user_data.apellidos,
+                    mail=user_data.email,
+                )
+                db.add(trainer)
         else:
             trainer = models.Trainer(
                 user_id=db_user.id,
@@ -900,7 +921,23 @@ def create_user(db: Session, user_data: auth_schemas.UserCreate):
             .first()
         )
         if client:
-            client.user_id = db_user.id
+            # Environment-based behavior:
+            # - Production: Reuse existing profile (preserve history/audit trail)
+            # - Dev/Test: Only reuse if profile is active (clean onboarding tests)
+            if settings.is_production or client.is_active:
+                client.user_id = db_user.id
+                # Reactivate if it was soft-deleted
+                if not client.is_active:
+                    client.is_active = True
+            else:
+                # In dev/test, create new profile if old one is inactive
+                client = models.ClientProfile(
+                    user_id=db_user.id,
+                    nombre=user_data.nombre,
+                    apellidos=user_data.apellidos,
+                    mail=user_data.email,
+                )
+                db.add(client)
         else:
             client = models.ClientProfile(
                 user_id=db_user.id,
@@ -1241,7 +1278,55 @@ def delete_client_routine(db: Session, routine_id: int) -> bool:
 
 # Client Progress CRUD operations
 def create_client_progress(db: Session, progress_data: schemas.ClientProgressCreate):
-    db_progress = models.ClientProgress(**progress_data.model_dump())
+    from .utils.body_composition import calculate_body_composition
+
+    # Get client profile for age and gender
+    client = (
+        db.query(models.ClientProfile)
+        .filter(models.ClientProfile.id == progress_data.client_id)
+        .first()
+    )
+
+    progress_dict = progress_data.model_dump()
+
+    # Calculate body composition if we have all required data
+    if (
+        client
+        and client.edad
+        and client.sexo
+        and progress_dict.get("peso")
+        and all(
+            progress_dict.get(f"skinfold_{site}") is not None
+            for site in [
+                "triceps",
+                "subscapular",
+                "biceps",
+                "iliac_crest",
+                "supraspinal",
+                "abdominal",
+                "thigh",
+            ]
+        )
+    ):
+        composition = calculate_body_composition(
+            weight_kg=progress_dict["peso"],
+            age=client.edad,
+            gender=(
+                client.sexo.value if hasattr(client.sexo, "value") else str(client.sexo)
+            ),
+            skinfold_triceps=progress_dict.get("skinfold_triceps"),
+            skinfold_subscapular=progress_dict.get("skinfold_subscapular"),
+            skinfold_biceps=progress_dict.get("skinfold_biceps"),
+            skinfold_iliac_crest=progress_dict.get("skinfold_iliac_crest"),
+            skinfold_supraspinal=progress_dict.get("skinfold_supraspinal"),
+            skinfold_abdominal=progress_dict.get("skinfold_abdominal"),
+            skinfold_thigh=progress_dict.get("skinfold_thigh"),
+        )
+        progress_dict["body_fat_percentage"] = composition["body_fat_percentage"]
+        progress_dict["muscle_mass_kg"] = composition["muscle_mass_kg"]
+        progress_dict["fat_free_mass_kg"] = composition["fat_free_mass_kg"]
+
+    db_progress = models.ClientProgress(**progress_dict)
     db.add(db_progress)
     db.commit()
     db.refresh(db_progress)
@@ -1251,7 +1336,13 @@ def create_client_progress(db: Session, progress_data: schemas.ClientProgressCre
 def get_client_progress(
     db: Session, skip: int = 0, limit: int = 100
 ) -> List[models.ClientProgress]:
-    return db.query(models.ClientProgress).offset(skip).limit(limit).all()
+    return (
+        db.query(models.ClientProgress)
+        .options(noload(models.ClientProgress.client))
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
 
 def get_client_progress_by_client_id(
@@ -1259,6 +1350,7 @@ def get_client_progress_by_client_id(
 ) -> List[models.ClientProgress]:
     return (
         db.query(models.ClientProgress)
+        .options(noload(models.ClientProgress.client))
         .filter(models.ClientProgress.client_id == client_id)
         .offset(skip)
         .limit(limit)
@@ -1269,6 +1361,7 @@ def get_client_progress_by_client_id(
 def get_client_progress_by_id(db: Session, progress_id: int):
     return (
         db.query(models.ClientProgress)
+        .options(noload(models.ClientProgress.client))
         .filter(models.ClientProgress.id == progress_id)
         .first()
     )
@@ -1277,6 +1370,8 @@ def get_client_progress_by_id(db: Session, progress_id: int):
 def update_client_progress(
     db: Session, progress_id: int, progress_data: schemas.ClientProgressUpdate
 ):
+    from .utils.body_composition import calculate_body_composition
+
     db_progress = get_client_progress_by_id(db, progress_id)
     if not db_progress:
         return None
@@ -1288,17 +1383,84 @@ def update_client_progress(
         setattr(db_progress, field, value)
 
     # Recalculate BMI if weight or height changed
+    # Height is in cm, convert to meters for BMI calculation
     if "peso" in update_data or "altura" in update_data:
         peso = update_data.get("peso", db_progress.peso)
         altura = update_data.get("altura", db_progress.altura)
 
         if peso is not None and altura is not None:
-            # Calculate new BMI with 2 decimal places
-            bmi = peso / (altura**2)
+            # Convert cm to meters for BMI calculation
+            altura_m = altura / 100
+            bmi = peso / (altura_m**2)
             db_progress.imc = round(bmi, 2)
         else:
             # Clear BMI if we can't calculate it
             db_progress.imc = None
+
+    # Recalculate body composition if anthropometric data or weight changed
+    skinfold_fields = [
+        "skinfold_triceps",
+        "skinfold_subscapular",
+        "skinfold_biceps",
+        "skinfold_iliac_crest",
+        "skinfold_supraspinal",
+        "skinfold_abdominal",
+        "skinfold_thigh",
+    ]
+    should_recalculate = "peso" in update_data or any(
+        field in update_data for field in skinfold_fields
+    )
+
+    if should_recalculate:
+        # Get client profile for age and gender
+        client = (
+            db.query(models.ClientProfile)
+            .filter(models.ClientProfile.id == db_progress.client_id)
+            .first()
+        )
+
+        if (
+            client
+            and client.edad
+            and client.sexo
+            and db_progress.peso
+            and all(
+                getattr(db_progress, f"skinfold_{site}", None) is not None
+                for site in [
+                    "triceps",
+                    "subscapular",
+                    "biceps",
+                    "iliac_crest",
+                    "supraspinal",
+                    "abdominal",
+                    "thigh",
+                ]
+            )
+        ):
+            composition = calculate_body_composition(
+                weight_kg=db_progress.peso,
+                age=client.edad,
+                gender=(
+                    client.sexo.value
+                    if hasattr(client.sexo, "value")
+                    else str(client.sexo)
+                ),
+                skinfold_triceps=getattr(db_progress, "skinfold_triceps", None),
+                skinfold_subscapular=getattr(db_progress, "skinfold_subscapular", None),
+                skinfold_biceps=getattr(db_progress, "skinfold_biceps", None),
+                skinfold_iliac_crest=getattr(db_progress, "skinfold_iliac_crest", None),
+                skinfold_supraspinal=getattr(db_progress, "skinfold_supraspinal", None),
+                skinfold_abdominal=getattr(db_progress, "skinfold_abdominal", None),
+                skinfold_thigh=getattr(db_progress, "skinfold_thigh", None),
+            )
+            db_progress.body_fat_percentage = composition["body_fat_percentage"]
+            db_progress.muscle_mass_kg = composition["muscle_mass_kg"]
+            db_progress.fat_free_mass_kg = composition["fat_free_mass_kg"]
+        else:
+            # Clear body composition if we can't calculate it
+            db_progress.body_fat_percentage = None
+            db_progress.muscle_mass_kg = None
+            db_progress.fat_free_mass_kg = None
 
     db.commit()
     db.refresh(db_progress)
@@ -1316,6 +1478,736 @@ def delete_client_progress(db: Session, progress_id: int) -> bool:
 
 
 # Training Plan CRUD operations
+# Training Plan Template CRUD
+def create_training_plan_template(
+    db: Session, template_data: schemas.TrainingPlanTemplateCreate
+) -> models.TrainingPlanTemplate:
+    """Create a new training plan template"""
+    db_template = models.TrainingPlanTemplate(**template_data.model_dump())
+    db.add(db_template)
+    db.commit()
+    db.refresh(db_template)
+    return db_template
+
+
+def get_training_plan_templates(
+    db: Session,
+    trainer_id: int,
+    category: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> List[models.TrainingPlanTemplate]:
+    """Get all templates for a trainer"""
+    query = db.query(models.TrainingPlanTemplate).filter(
+        models.TrainingPlanTemplate.trainer_id == trainer_id,
+        models.TrainingPlanTemplate.is_active.is_(True),
+    )
+    if category:
+        query = query.filter(models.TrainingPlanTemplate.category == category)
+    return query.offset(skip).limit(limit).all()
+
+
+def get_training_plan_template(
+    db: Session, template_id: int
+) -> Optional[models.TrainingPlanTemplate]:
+    """Get a specific training plan template"""
+    return (
+        db.query(models.TrainingPlanTemplate)
+        .filter(
+            models.TrainingPlanTemplate.id == template_id,
+            models.TrainingPlanTemplate.is_active.is_(True),
+        )
+        .first()
+    )
+
+
+def update_training_plan_template(
+    db: Session,
+    template_id: int,
+    template_data: schemas.TrainingPlanTemplateUpdate,
+) -> Optional[models.TrainingPlanTemplate]:
+    """Update a training plan template"""
+    db_template = get_training_plan_template(db, template_id)
+    if not db_template:
+        return None
+
+    update_data = template_data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(db_template, field, value)
+
+    db.commit()
+    db.refresh(db_template)
+    return db_template
+
+
+def delete_training_plan_template(db: Session, template_id: int) -> bool:
+    """Delete (soft delete) a training plan template"""
+    db_template = get_training_plan_template(db, template_id)
+    if not db_template:
+        return False
+
+    db_template.is_active = False
+    db.commit()
+    return True
+
+
+# Training Plan Instance CRUD
+def create_training_plan_instance(
+    db: Session, instance_data: schemas.TrainingPlanInstanceCreate
+) -> models.TrainingPlanInstance:
+    """Create a new training plan instance"""
+    db_instance = models.TrainingPlanInstance(**instance_data.model_dump())
+    db.add(db_instance)
+    db.commit()
+    db.refresh(db_instance)
+    return db_instance
+
+
+def get_training_plan_instances(
+    db: Session,
+    trainer_id: Optional[int] = None,
+    client_id: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> List[models.TrainingPlanInstance]:
+    """Get training plan instances with optional filtering"""
+    query = db.query(models.TrainingPlanInstance).filter(
+        models.TrainingPlanInstance.is_active.is_(True)
+    )
+    if trainer_id:
+        query = query.filter(models.TrainingPlanInstance.trainer_id == trainer_id)
+    if client_id:
+        query = query.filter(models.TrainingPlanInstance.client_id == client_id)
+    return query.offset(skip).limit(limit).all()
+
+
+def get_training_plan_instance(
+    db: Session, instance_id: int
+) -> Optional[models.TrainingPlanInstance]:
+    """Get a specific training plan instance"""
+    return (
+        db.query(models.TrainingPlanInstance)
+        .filter(
+            models.TrainingPlanInstance.id == instance_id,
+            models.TrainingPlanInstance.is_active.is_(True),
+        )
+        .first()
+    )
+
+
+def update_training_plan_instance(
+    db: Session,
+    instance_id: int,
+    instance_data: schemas.TrainingPlanInstanceUpdate,
+) -> Optional[models.TrainingPlanInstance]:
+    """Update a training plan instance"""
+    db_instance = get_training_plan_instance(db, instance_id)
+    if not db_instance:
+        return None
+
+    update_data = instance_data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(db_instance, field, value)
+
+    db.commit()
+    db.refresh(db_instance)
+    return db_instance
+
+
+def delete_training_plan_instance(db: Session, instance_id: int) -> bool:
+    """Delete (soft delete) a training plan instance"""
+    db_instance = get_training_plan_instance(db, instance_id)
+    if not db_instance:
+        return False
+
+    db_instance.is_active = False
+    db.commit()
+    return True
+
+
+# Helper functions for getting cycles by template/instance
+def get_macrocycles_by_template(
+    db: Session, template_id: int, skip: int = 0, limit: int = 100
+) -> List[models.Macrocycle]:
+    """Get all macrocycles for a template"""
+    return (
+        db.query(models.Macrocycle)
+        .filter(
+            models.Macrocycle.template_id == template_id,
+            models.Macrocycle.is_active.is_(True),
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
+def get_macrocycles_by_instance(
+    db: Session, instance_id: int, skip: int = 0, limit: int = 100
+) -> List[models.Macrocycle]:
+    """Get all macrocycles for an instance"""
+    return (
+        db.query(models.Macrocycle)
+        .filter(
+            models.Macrocycle.instance_id == instance_id,
+            models.Macrocycle.is_active.is_(True),
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
+def assign_template_to_client(
+    db: Session,
+    template_id: int,
+    client_id: int,
+    start_date: date,
+    end_date: date,
+    trainer_id: int,
+    name: Optional[str] = None,
+) -> models.TrainingPlanInstance:
+    """
+    Assign a template to a client (creates instance with all cycles duplicated).
+    
+    This function:
+    1. Gets the template
+    2. Creates an instance base
+    3. Duplicates all macrocycles, mesocycles, and microcycles as instances
+    4. Adjusts dates proportionally based on new start_date/end_date
+    5. Increments template.usage_count
+    
+    Args:
+        db: Database session
+        template_id: ID of the template to assign
+        client_id: ID of the client to assign to
+        start_date: Start date for the instance
+        end_date: End date for the instance
+        trainer_id: ID of the trainer
+        name: Optional custom name (defaults to template name)
+    
+    Returns:
+        Created TrainingPlanInstance with all cycles duplicated
+    """
+    # 1. Get template
+    template = get_training_plan_template(db, template_id)
+    if not template:
+        raise ValueError(f"Template {template_id} not found")
+
+    # 2. Create instance base
+    instance_name = name or template.name
+    instance = models.TrainingPlanInstance(
+        template_id=template_id,
+        client_id=client_id,
+        trainer_id=trainer_id,
+        name=instance_name,
+        description=template.description,
+        start_date=start_date,
+        end_date=end_date,
+        goal=template.goal,
+        status="active",
+    )
+    db.add(instance)
+    db.flush()  # Get the ID without committing
+
+    # 3. Get template cycles
+    template_macrocycles = get_macrocycles_by_template(db, template_id)
+
+    if template_macrocycles:
+        # Calculate date adjustment ratio
+        template_duration = (template_macrocycles[-1].end_date - template_macrocycles[0].start_date).days
+        instance_duration = (end_date - start_date).days
+        date_ratio = instance_duration / template_duration if template_duration > 0 else 1.0
+        template_start = template_macrocycles[0].start_date
+
+        # 4. Duplicate cycles recursively
+        macrocycle_mapping: Dict[int, int] = {}  # template_macro_id -> instance_macro_id
+        mesocycle_mapping: Dict[int, int] = {}  # template_meso_id -> instance_meso_id
+
+        for template_macro in template_macrocycles:
+            # Calculate new dates for macrocycle
+            days_from_start = (template_macro.start_date - template_start).days
+            new_start = start_date + timedelta(days=int(days_from_start * date_ratio))
+            new_end_days = (template_macro.end_date - template_macro.start_date).days
+            new_end = new_start + timedelta(days=int(new_end_days * date_ratio))
+
+            # Create instance macrocycle
+            instance_macro = models.Macrocycle(
+                instance_id=instance.id,
+                name=template_macro.name,
+                description=template_macro.description,
+                start_date=new_start,
+                end_date=new_end,
+                focus=template_macro.focus,
+                physical_quality=template_macro.physical_quality,
+                volume=template_macro.volume,
+                intensity=template_macro.intensity,
+                volume_intensity_ratio=template_macro.volume_intensity_ratio,
+            )
+            db.add(instance_macro)
+            db.flush()
+            macrocycle_mapping[template_macro.id] = instance_macro.id
+
+            # Get mesocycles for this macrocycle
+            template_mesocycles = get_mesocycles_by_macrocycle(db, template_macro.id)
+
+            for template_meso in template_mesocycles:
+                # Calculate new dates for mesocycle
+                days_from_macro_start = (template_meso.start_date - template_macro.start_date).days
+                meso_start = new_start + timedelta(days=int(days_from_macro_start * date_ratio))
+                meso_end_days = (template_meso.end_date - template_meso.start_date).days
+                meso_end = meso_start + timedelta(days=int(meso_end_days * date_ratio))
+
+                # Create instance mesocycle
+                instance_meso = models.Mesocycle(
+                    macrocycle_id=instance_macro.id,
+                    name=template_meso.name,
+                    description=template_meso.description,
+                    start_date=meso_start,
+                    end_date=meso_end,
+                    duration_weeks=template_meso.duration_weeks,
+                    primary_focus=template_meso.primary_focus,
+                    secondary_focus=template_meso.secondary_focus,
+                    physical_quality=template_meso.physical_quality,
+                    volume=template_meso.volume,
+                    intensity=template_meso.intensity,
+                    target_volume=template_meso.target_volume,
+                    target_intensity=template_meso.target_intensity,
+                )
+                db.add(instance_meso)
+                db.flush()
+                mesocycle_mapping[template_meso.id] = instance_meso.id
+
+                # Get microcycles for this mesocycle
+                template_microcycles = get_microcycles_by_mesocycle(db, template_meso.id)
+
+                for template_micro in template_microcycles:
+                    # Calculate new dates for microcycle
+                    days_from_meso_start = (template_micro.start_date - template_meso.start_date).days
+                    micro_start = meso_start + timedelta(days=int(days_from_meso_start * date_ratio))
+                    micro_end_days = (template_micro.end_date - template_micro.start_date).days
+                    micro_end = micro_start + timedelta(days=int(micro_end_days * date_ratio))
+
+                    # Create instance microcycle
+                    instance_micro = models.Microcycle(
+                        mesocycle_id=instance_meso.id,
+                        name=template_micro.name,
+                        description=template_micro.description,
+                        start_date=micro_start,
+                        end_date=micro_end,
+                        duration_days=template_micro.duration_days,
+                        training_frequency=template_micro.training_frequency,
+                        deload_week=template_micro.deload_week,
+                        notes=template_micro.notes,
+                        physical_quality=template_micro.physical_quality,
+                        volume=template_micro.volume,
+                        intensity=template_micro.intensity,
+                    )
+                    db.add(instance_micro)
+
+    # 5. Increment template usage_count
+    template.usage_count += 1
+
+    # Commit everything
+    db.commit()
+    db.refresh(instance)
+
+    return instance
+
+
+def convert_plan_to_template(
+    db: Session,
+    plan_id: int,
+    template_data: schemas.TrainingPlanTemplateCreate,
+) -> models.TrainingPlanTemplate:
+    """
+    Convert a specific plan to a template.
+    
+    This function:
+    1. Gets the plan
+    2. Creates a template (without client_id)
+    3. Duplicates all cycles as template cycles
+    4. Marks plan.was_converted_to_template = True
+    5. Sets plan.template_id = new_template.id
+    
+    Args:
+        db: Database session
+        plan_id: ID of the plan to convert
+        template_data: Template data (name, category, etc.)
+    
+    Returns:
+        Created TrainingPlanTemplate
+    """
+    # 1. Get plan
+    plan = get_training_plan(db, plan_id)
+    if not plan:
+        raise ValueError(f"Plan {plan_id} not found")
+
+    # 2. Create template
+    template = models.TrainingPlanTemplate(
+        trainer_id=plan.trainer_id,
+        name=template_data.name,
+        description=template_data.description or plan.description,
+        goal=template_data.goal or plan.goal,
+        category=template_data.category,
+        tags=template_data.tags,
+        estimated_duration_weeks=template_data.estimated_duration_weeks
+        or ((plan.end_date - plan.start_date).days // 7),
+    )
+    db.add(template)
+    db.flush()
+
+    # 3. Get plan cycles and duplicate as template cycles
+    plan_macrocycles = get_macrocycles_by_plan(db, plan_id)
+
+    for plan_macro in plan_macrocycles:
+        # Create template macrocycle
+        template_macro = models.Macrocycle(
+            template_id=template.id,
+            name=plan_macro.name,
+            description=plan_macro.description,
+            start_date=plan_macro.start_date,
+            end_date=plan_macro.end_date,
+            focus=plan_macro.focus,
+            physical_quality=plan_macro.physical_quality,
+            volume=plan_macro.volume,
+            intensity=plan_macro.intensity,
+            volume_intensity_ratio=plan_macro.volume_intensity_ratio,
+        )
+        db.add(template_macro)
+        db.flush()
+
+        # Get mesocycles
+        plan_mesocycles = get_mesocycles_by_macrocycle(db, plan_macro.id)
+
+        for plan_meso in plan_mesocycles:
+            # Create template mesocycle
+            template_meso = models.Mesocycle(
+                macrocycle_id=template_macro.id,
+                name=plan_meso.name,
+                description=plan_meso.description,
+                start_date=plan_meso.start_date,
+                end_date=plan_meso.end_date,
+                duration_weeks=plan_meso.duration_weeks,
+                primary_focus=plan_meso.primary_focus,
+                secondary_focus=plan_meso.secondary_focus,
+                physical_quality=plan_meso.physical_quality,
+                volume=plan_meso.volume,
+                intensity=plan_meso.intensity,
+                target_volume=plan_meso.target_volume,
+                target_intensity=plan_meso.target_intensity,
+            )
+            db.add(template_meso)
+            db.flush()
+
+            # Get microcycles
+            plan_microcycles = get_microcycles_by_mesocycle(db, plan_meso.id)
+
+            for plan_micro in plan_microcycles:
+                # Create template microcycle
+                template_micro = models.Microcycle(
+                    mesocycle_id=template_meso.id,
+                    name=plan_micro.name,
+                    description=plan_micro.description,
+                    start_date=plan_micro.start_date,
+                    end_date=plan_micro.end_date,
+                    duration_days=plan_micro.duration_days,
+                    training_frequency=plan_micro.training_frequency,
+                    deload_week=plan_micro.deload_week,
+                    notes=plan_micro.notes,
+                    physical_quality=plan_micro.physical_quality,
+                    volume=plan_micro.volume,
+                    intensity=plan_micro.intensity,
+                )
+                db.add(template_micro)
+
+    # 4. Mark plan
+    plan.was_converted_to_template = True
+    plan.template_id = template.id
+
+    db.commit()
+    db.refresh(template)
+
+    return template
+
+
+def assign_plan_to_another_client(
+    db: Session,
+    plan_id: int,
+    client_id: int,
+    start_date: date,
+    end_date: date,
+    trainer_id: int,
+    name: Optional[str] = None,
+) -> models.TrainingPlanInstance:
+    """
+    Assign a specific plan to another client (creates instance).
+    
+    Similar to assign_template_to_client but works with existing plans.
+    
+    Args:
+        db: Database session
+        plan_id: ID of the plan to assign
+        client_id: ID of the new client
+        start_date: Start date for the instance
+        end_date: End date for the instance
+        trainer_id: ID of the trainer
+        name: Optional custom name
+    
+    Returns:
+        Created TrainingPlanInstance
+    """
+    # Get plan
+    plan = get_training_plan(db, plan_id)
+    if not plan:
+        raise ValueError(f"Plan {plan_id} not found")
+
+    # Create instance
+    instance_name = name or plan.name
+    instance = models.TrainingPlanInstance(
+        source_plan_id=plan_id,
+        client_id=client_id,
+        trainer_id=trainer_id,
+        name=instance_name,
+        description=plan.description,
+        start_date=start_date,
+        end_date=end_date,
+        goal=plan.goal,
+        status="active",
+    )
+    db.add(instance)
+    db.flush()
+
+    # Get plan cycles and duplicate
+    plan_macrocycles = get_macrocycles_by_plan(db, plan_id)
+
+    if plan_macrocycles:
+        # Calculate date adjustment
+        template_duration = (plan_macrocycles[-1].end_date - plan_macrocycles[0].start_date).days
+        instance_duration = (end_date - start_date).days
+        date_ratio = instance_duration / template_duration if template_duration > 0 else 1.0
+        plan_start = plan_macrocycles[0].start_date
+
+        for plan_macro in plan_macrocycles:
+            # Calculate new dates
+            days_from_start = (plan_macro.start_date - plan_start).days
+            new_start = start_date + timedelta(days=int(days_from_start * date_ratio))
+            new_end_days = (plan_macro.end_date - plan_macro.start_date).days
+            new_end = new_start + timedelta(days=int(new_end_days * date_ratio))
+
+            # Create instance macrocycle
+            instance_macro = models.Macrocycle(
+                instance_id=instance.id,
+                name=plan_macro.name,
+                description=plan_macro.description,
+                start_date=new_start,
+                end_date=new_end,
+                focus=plan_macro.focus,
+                physical_quality=plan_macro.physical_quality,
+                volume=plan_macro.volume,
+                intensity=plan_macro.intensity,
+                volume_intensity_ratio=plan_macro.volume_intensity_ratio,
+            )
+            db.add(instance_macro)
+            db.flush()
+
+            # Get mesocycles
+            plan_mesocycles = get_mesocycles_by_macrocycle(db, plan_macro.id)
+
+            for plan_meso in plan_mesocycles:
+                # Calculate dates
+                days_from_macro_start = (plan_meso.start_date - plan_macro.start_date).days
+                meso_start = new_start + timedelta(days=int(days_from_macro_start * date_ratio))
+                meso_end_days = (plan_meso.end_date - plan_meso.start_date).days
+                meso_end = meso_start + timedelta(days=int(meso_end_days * date_ratio))
+
+                # Create instance mesocycle
+                instance_meso = models.Mesocycle(
+                    macrocycle_id=instance_macro.id,
+                    name=plan_meso.name,
+                    description=plan_meso.description,
+                    start_date=meso_start,
+                    end_date=meso_end,
+                    duration_weeks=plan_meso.duration_weeks,
+                    primary_focus=plan_meso.primary_focus,
+                    secondary_focus=plan_meso.secondary_focus,
+                    physical_quality=plan_meso.physical_quality,
+                    volume=plan_meso.volume,
+                    intensity=plan_meso.intensity,
+                    target_volume=plan_meso.target_volume,
+                    target_intensity=plan_meso.target_intensity,
+                )
+                db.add(instance_meso)
+                db.flush()
+
+                # Get microcycles
+                plan_microcycles = get_microcycles_by_mesocycle(db, plan_meso.id)
+
+                for plan_micro in plan_microcycles:
+                    # Calculate dates
+                    days_from_meso_start = (plan_micro.start_date - plan_meso.start_date).days
+                    micro_start = meso_start + timedelta(days=int(days_from_meso_start * date_ratio))
+                    micro_end_days = (plan_micro.end_date - plan_micro.start_date).days
+                    micro_end = micro_start + timedelta(days=int(micro_end_days * date_ratio))
+
+                    # Create instance microcycle
+                    instance_micro = models.Microcycle(
+                        mesocycle_id=instance_meso.id,
+                        name=plan_micro.name,
+                        description=plan_micro.description,
+                        start_date=micro_start,
+                        end_date=micro_end,
+                        duration_days=plan_micro.duration_days,
+                        training_frequency=plan_micro.training_frequency,
+                        deload_week=plan_micro.deload_week,
+                        notes=plan_micro.notes,
+                        physical_quality=plan_micro.physical_quality,
+                        volume=plan_micro.volume,
+                        intensity=plan_micro.intensity,
+                    )
+                    db.add(instance_micro)
+
+    db.commit()
+    db.refresh(instance)
+
+    return instance
+
+
+# Coherence Calculation System (Adrián's requirement)
+def calculate_plan_coherence(
+    db: Session,
+    plan_id: int,
+    deviation_threshold: float = 20.0,  # Percentage threshold for warnings
+) -> Dict:
+    """
+    Calculate coherence between month (Macrocycle) → week (Mesocycle) → day (Microcycle).
+    
+    Coherence is calculated by comparing volume/intensity values across levels:
+    - Month (Macrocycle) is the baseline
+    - Week (Mesocycle) should match month values
+    - Day (Microcycle) should match week values
+    
+    Returns coherence percentage and warnings for deviations.
+    
+    Args:
+        db: Database session
+        plan_id: ID of the training plan
+        deviation_threshold: Percentage threshold for warnings (default 20%)
+    
+    Returns:
+        Dict with coherence results for each level
+    """
+    plan = get_training_plan(db, plan_id)
+    if not plan:
+        raise ValueError(f"Plan {plan_id} not found")
+
+    # Get all cycles for the plan
+    macrocycles = get_macrocycles_by_plan(db, plan_id)
+    
+    month_coherence = []
+    week_coherence = []
+    day_coherence = []
+    overall_coherences = []
+
+    for macro in macrocycles:
+        if macro.volume is None or macro.intensity is None:
+            continue
+
+        # Month coherence (baseline - always 100% for itself)
+        month_coherence.append({
+            "macrocycle_id": macro.id,
+            "macrocycle_name": macro.name,
+            "physical_quality": macro.physical_quality or macro.focus,
+            "planned_volume": macro.volume,
+            "planned_intensity": macro.intensity,
+            "coherence_percentage": 100.0,
+            "deviation_warning": False,
+        })
+
+        # Get mesocycles (weeks) for this macrocycle
+        mesocycles = get_mesocycles_by_macrocycle(db, macro.id)
+
+        for meso in mesocycles:
+            if meso.volume is None or meso.intensity is None:
+                # Inheritance: if week doesn't have values, use month values
+                meso_volume = macro.volume
+                meso_intensity = macro.intensity
+                inherited = True
+            else:
+                meso_volume = meso.volume
+                meso_intensity = meso.intensity
+                inherited = False
+
+            # Calculate deviation from month
+            volume_deviation = abs(meso_volume - macro.volume) / macro.volume * 100 if macro.volume > 0 else 0
+            intensity_deviation = abs(meso_intensity - macro.intensity) / macro.intensity * 100 if macro.intensity > 0 else 0
+            avg_deviation = (volume_deviation + intensity_deviation) / 2
+            coherence_pct = max(0, 100 - avg_deviation)
+
+            week_coherence.append({
+                "mesocycle_id": meso.id,
+                "mesocycle_name": meso.name,
+                "macrocycle_id": macro.id,
+                "physical_quality": meso.physical_quality or meso.primary_focus,
+                "planned_volume": meso_volume,
+                "planned_intensity": meso_intensity,
+                "month_volume": macro.volume,
+                "month_intensity": macro.intensity,
+                "coherence_percentage": coherence_pct,
+                "deviation_warning": avg_deviation > deviation_threshold,
+                "inherited": inherited,
+            })
+            overall_coherences.append(coherence_pct)
+
+            # Get microcycles (days) for this mesocycle
+            microcycles = get_microcycles_by_mesocycle(db, meso.id)
+
+            for micro in microcycles:
+                if micro.volume is None or micro.intensity is None:
+                    # Inheritance: if day doesn't have values, use week values
+                    micro_volume = meso_volume
+                    micro_intensity = meso_intensity
+                    inherited = True
+                else:
+                    micro_volume = micro.volume
+                    micro_intensity = micro.intensity
+                    inherited = False
+
+                # Calculate deviation from week
+                volume_deviation = abs(micro_volume - meso_volume) / meso_volume * 100 if meso_volume > 0 else 0
+                intensity_deviation = abs(micro_intensity - meso_intensity) / meso_intensity * 100 if meso_intensity > 0 else 0
+                avg_deviation = (volume_deviation + intensity_deviation) / 2
+                coherence_pct = max(0, 100 - avg_deviation)
+
+                day_coherence.append({
+                    "microcycle_id": micro.id,
+                    "microcycle_name": micro.name,
+                    "mesocycle_id": meso.id,
+                    "physical_quality": micro.physical_quality or meso.primary_focus,
+                    "planned_volume": micro_volume,
+                    "planned_intensity": micro_intensity,
+                    "week_volume": meso_volume,
+                    "week_intensity": meso_intensity,
+                    "coherence_percentage": coherence_pct,
+                    "deviation_warning": avg_deviation > deviation_threshold,
+                    "inherited": inherited,
+                })
+                overall_coherences.append(coherence_pct)
+
+    # Calculate overall coherence
+    overall_coherence = sum(overall_coherences) / len(overall_coherences) if overall_coherences else 100.0
+
+    return {
+        "plan_id": plan_id,
+        "month_coherence": month_coherence,
+        "week_coherence": week_coherence,
+        "day_coherence": day_coherence,
+        "overall_coherence": overall_coherence,
+        "deviation_threshold": deviation_threshold,
+    }
+
+
+# Training Plan CRUD (existing, modified)
 def create_training_plan(db: Session, plan_data: schemas.TrainingPlanCreate):
     db_plan = models.TrainingPlan(**plan_data.model_dump())
     db.add(db_plan)
@@ -1386,6 +2278,73 @@ def delete_training_plan(db: Session, plan_id: int) -> bool:
     return True
 
 
+# Milestone CRUD operations
+def create_milestone(
+    db: Session, milestone_data: schemas.MilestoneCreate, training_plan_id: int
+):
+    """Create a new milestone for a training plan"""
+    milestone_dict = milestone_data.model_dump(exclude_unset=True)
+    milestone_dict["training_plan_id"] = training_plan_id
+    db_milestone = models.Milestone(**milestone_dict)
+    db.add(db_milestone)
+    db.commit()
+    db.refresh(db_milestone)
+    return db_milestone
+
+
+def get_milestones_by_plan(
+    db: Session, training_plan_id: int, skip: int = 0, limit: int = 100
+) -> List[models.Milestone]:
+    """Get all milestones for a training plan"""
+    return (
+        db.query(models.Milestone)
+        .filter(models.Milestone.training_plan_id == training_plan_id)
+        .filter(models.Milestone.is_active.is_(True))
+        .order_by(models.Milestone.milestone_date)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
+def get_milestone(db: Session, milestone_id: int):
+    """Get a milestone by ID"""
+    return (
+        db.query(models.Milestone)
+        .filter(models.Milestone.id == milestone_id)
+        .filter(models.Milestone.is_active.is_(True))
+        .first()
+    )
+
+
+def update_milestone(
+    db: Session, milestone_id: int, milestone_data: schemas.MilestoneUpdate
+):
+    """Update a milestone"""
+    db_milestone = get_milestone(db, milestone_id)
+    if not db_milestone:
+        return None
+
+    update_data = milestone_data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(db_milestone, field, value)
+
+    db.commit()
+    db.refresh(db_milestone)
+    return db_milestone
+
+
+def delete_milestone(db: Session, milestone_id: int) -> bool:
+    """Soft delete a milestone"""
+    db_milestone = get_milestone(db, milestone_id)
+    if not db_milestone:
+        return False
+
+    db_milestone.is_active = False
+    db.commit()
+    return True
+
+
 # Macrocycle CRUD operations
 def create_macrocycle(db: Session, macrocycle_data: schemas.MacrocycleCreate):
     db_macrocycle = models.Macrocycle(**macrocycle_data.model_dump())
@@ -1399,6 +2358,18 @@ def get_macrocycles(
     db: Session, skip: int = 0, limit: int = 100
 ) -> List[models.Macrocycle]:
     return db.query(models.Macrocycle).offset(skip).limit(limit).all()
+
+
+def get_macrocycles_by_plan(
+    db: Session, training_plan_id: int, skip: int = 0, limit: int = 100
+) -> List[models.Macrocycle]:
+    return (
+        db.query(models.Macrocycle)
+        .filter(models.Macrocycle.training_plan_id == training_plan_id)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
 
 def get_macrocycle(db: Session, macrocycle_id: int):
@@ -1450,6 +2421,18 @@ def get_mesocycles(
     return db.query(models.Mesocycle).offset(skip).limit(limit).all()
 
 
+def get_mesocycles_by_macrocycle(
+    db: Session, macrocycle_id: int, skip: int = 0, limit: int = 100
+) -> List[models.Mesocycle]:
+    return (
+        db.query(models.Mesocycle)
+        .filter(models.Mesocycle.macrocycle_id == macrocycle_id)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
 def get_mesocycle(db: Session, mesocycle_id: int):
     return (
         db.query(models.Mesocycle).filter(models.Mesocycle.id == mesocycle_id).first()
@@ -1495,6 +2478,18 @@ def get_microcycles(
     db: Session, skip: int = 0, limit: int = 100
 ) -> List[models.Microcycle]:
     return db.query(models.Microcycle).offset(skip).limit(limit).all()
+
+
+def get_microcycles_by_mesocycle(
+    db: Session, mesocycle_id: int, skip: int = 0, limit: int = 100
+) -> List[models.Microcycle]:
+    return (
+        db.query(models.Microcycle)
+        .filter(models.Microcycle.mesocycle_id == mesocycle_id)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
 
 def get_microcycle(db: Session, microcycle_id: int):
@@ -1689,12 +2684,25 @@ def create_client_feedback(db: Session, feedback_data: schemas.ClientFeedbackCre
 def get_client_feedback(
     db: Session, skip: int = 0, limit: int = 100
 ) -> List[models.ClientFeedback]:
-    return db.query(models.ClientFeedback).offset(skip).limit(limit).all()
+    return (
+        db.query(models.ClientFeedback)
+        .options(
+            noload(models.ClientFeedback.client),
+            noload(models.ClientFeedback.training_session),
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
 
 def get_client_feedback_by_id(db: Session, feedback_id: int):
     return (
         db.query(models.ClientFeedback)
+        .options(
+            noload(models.ClientFeedback.client),
+            noload(models.ClientFeedback.training_session),
+        )
         .filter(models.ClientFeedback.id == feedback_id)
         .first()
     )
@@ -1724,6 +2732,34 @@ def delete_client_feedback(db: Session, feedback_id: int) -> bool:
     db.delete(db_feedback)
     db.commit()
     return True
+
+
+def get_client_feedback_by_session(db: Session, session_id: int):
+    return (
+        db.query(models.ClientFeedback)
+        .options(
+            noload(models.ClientFeedback.client),
+            noload(models.ClientFeedback.training_session),
+        )
+        .filter(models.ClientFeedback.training_session_id == session_id)
+        .first()
+    )
+
+
+def get_client_feedback_by_client(
+    db: Session, client_id: int, skip: int = 0, limit: int = 100
+):
+    return (
+        db.query(models.ClientFeedback)
+        .options(
+            noload(models.ClientFeedback.client),
+            noload(models.ClientFeedback.training_session),
+        )
+        .filter(models.ClientFeedback.client_id == client_id)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
 
 # Progress Tracking CRUD operations

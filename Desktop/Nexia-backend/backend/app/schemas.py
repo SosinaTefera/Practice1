@@ -1,14 +1,22 @@
 from datetime import date, datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from pydantic import BaseModel, EmailStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 # Import enums from models
 from .db.models import (
     EffortCharacterEnum,
     ExperienceEnum,
     GenderEnum,
+    MilestoneTypeEnum,
     SetTypeEnum,
     TrainingGoalEnum,
     WeeklyFrequencyEnum,
@@ -294,7 +302,28 @@ class ClientProfileOut(ClientProfileBase):
     id: int
     fecha_alta: date
     imc: Optional[float] = None
+    # Override mail to allow placeholder emails (e.g., deleted_*@deleted.local)
+    mail: str  # Changed from EmailStr to str to allow placeholder emails
+    # Override altura to remove validation
+    # (output schema should accept any value from DB)
+    altura: Optional[float] = (
+        None  # Accept both meters and centimeters from old records
+    )
     model_config = {"from_attributes": True}
+
+    @field_validator("altura", mode="before")
+    @classmethod
+    def validate_height_output_before(cls, v):
+        """Convert height from meters to centimeters if needed.
+
+        Old records have height in meters (1.75, 1.78), new records in cm (175, 178).
+        Convert meters to cm so parent validator passes.
+        """
+        if v is not None:
+            # If value is less than 3, assume it's in meters and convert to cm
+            if v < 3:
+                return v * 100
+        return v
 
 
 class ClientListResponse(BaseModel):
@@ -349,6 +378,8 @@ class TrainerOut(TrainerBase):
     created_at: datetime
     updated_at: datetime
     is_active: bool
+    # Override mail to allow placeholder emails (e.g., deleted_*@deleted.local)
+    mail: str  # Changed from EmailStr to str to allow placeholder emails
     # Professional profile fields
     occupation: Optional[str] = None
     training_modality: Optional[str] = None
@@ -574,29 +605,104 @@ class ClientRoutineOut(ClientRoutineBase):
 class ClientProgressBase(BaseModel):
     client_id: int
     fecha_registro: date
+    fecha_inicio_prueba: Optional[date] = None
     peso: Optional[float] = None
-    altura: Optional[float] = None
-    unidad: str = "metric"  # Default to metric
+    altura: Optional[float] = None  # Height in centimeters (same as Onboarding)
     imc: Optional[float] = None
     notas: Optional[str] = None
 
+    # Anthropometric Data - Skinfolds (in mm)
+    skinfold_triceps: Optional[float] = None
+    skinfold_subscapular: Optional[float] = None
+    skinfold_biceps: Optional[float] = None
+    skinfold_iliac_crest: Optional[float] = None
+    skinfold_supraspinal: Optional[float] = None
+    skinfold_abdominal: Optional[float] = None
+    skinfold_thigh: Optional[float] = None
+    skinfold_calf: Optional[float] = None
+
+    # Anthropometric Data - Girths (in cm)
+    girth_relaxed_arm: Optional[float] = None
+    girth_flexed_contracted_arm: Optional[float] = None
+    girth_waist_minimum: Optional[float] = None
+    girth_hips_maximum: Optional[float] = None
+    girth_medial_thigh: Optional[float] = None
+    girth_maximum_calf: Optional[float] = None
+
+    # Anthropometric Data - Diameters (in cm)
+    diameter_humerus_biepicondylar: Optional[float] = None
+    diameter_femur_bicondylar: Optional[float] = None
+    diameter_bi_styloid_wrist: Optional[float] = None
+
+    # Body Composition Calculated Fields (read-only, calculated by backend)
+    body_fat_percentage: Optional[float] = None
+    muscle_mass_kg: Optional[float] = None
+    fat_free_mass_kg: Optional[float] = None
+
+    @field_validator(
+        "skinfold_triceps",
+        "skinfold_subscapular",
+        "skinfold_biceps",
+        "skinfold_iliac_crest",
+        "skinfold_supraspinal",
+        "skinfold_abdominal",
+        "skinfold_thigh",
+        "skinfold_calf",
+    )
+    @classmethod
+    def validate_skinfolds(cls, v):
+        if v is not None and (v < 0 or v > 50):
+            raise ValueError("Skinfold measurements must be between 0 and 50 mm")
+        return v
+
+    @field_validator(
+        "girth_relaxed_arm",
+        "girth_flexed_contracted_arm",
+        "girth_waist_minimum",
+        "girth_hips_maximum",
+        "girth_medial_thigh",
+        "girth_maximum_calf",
+    )
+    @classmethod
+    def validate_girths(cls, v):
+        if v is not None and (v < 10 or v > 200):
+            raise ValueError("Girth measurements must be between 10 and 200 cm")
+        return v
+
+    @field_validator(
+        "diameter_humerus_biepicondylar",
+        "diameter_femur_bicondylar",
+        "diameter_bi_styloid_wrist",
+    )
+    @classmethod
+    def validate_diameters(cls, v):
+        if v is not None and (v < 3 or v > 20):
+            raise ValueError("Diameter measurements must be between 3 and 20 cm")
+        return v
+
+    @field_validator("altura")
+    @classmethod
+    def validate_height(cls, v):
+        """Validate height in centimeters (same as Onboarding)"""
+        if v is not None and (v < 100 or v > 250):
+            raise ValueError("Height must be between 100 and 250 cm")
+        return v
+
+    @field_validator("peso")
+    @classmethod
+    def validate_weight(cls, v):
+        """Validate weight in kilograms"""
+        if v is not None and (v < 20 or v > 300):
+            raise ValueError("Weight must be between 20 and 300 kg")
+        return v
+
     @model_validator(mode="after")
-    def convert_and_validate_units(self):
-        """Convert imperial units to metric and validate ranges"""
-        # Ensure unidad has a value
-        if self.unidad is None:
-            self.unidad = "metric"
-
-        if self.peso is not None and self.unidad == "imperial":
-            # Convert pounds to kg
-            self.peso = round(self.peso * 0.453592, 2)
-        if self.altura is not None and self.unidad == "imperial":
-            # Convert inches to meters
-            self.altura = round(self.altura * 0.0254, 3)
-
-        # Calculate BMI automatically whenever weight or height is provided
+    def calculate_bmi(self):
+        """Calculate BMI from weight (kg) and height (cm)"""
+        # Height is in cm, convert to meters for BMI calculation
         if self.peso is not None and self.altura is not None:
-            bmi = self.peso / (self.altura**2)
+            altura_m = self.altura / 100  # Convert cm to meters
+            bmi = self.peso / (altura_m**2)
             self.imc = round(bmi, 2)  # Store with 2 decimal places
         elif self.peso is not None and self.altura is None:
             # If only weight is provided, clear BMI (can't calculate)
@@ -605,13 +711,7 @@ class ClientProgressBase(BaseModel):
             # If only height is provided, clear BMI (can't calculate)
             self.imc = None
 
-        # Validate final metric values
-        if self.peso is not None and (self.peso < 20 or self.peso > 300):
-            raise ValueError("Weight must be between 20 and 300 kg (after conversion)")
-        if self.altura is not None and (self.altura < 0.5 or self.altura > 3.0):
-            raise ValueError(
-                "Height must be between 0.5 and 3.0 meters (after conversion)"
-            )
+        # Validate BMI range
         if self.imc is not None and (self.imc < 10 or self.imc > 60):
             raise ValueError("BMI must be between 10 and 60")
         return self
@@ -622,24 +722,107 @@ class ClientProgressCreate(ClientProgressBase):
 
 
 class ClientProgressUpdate(BaseModel):
+    fecha_inicio_prueba: Optional[date] = None
     peso: Optional[float] = None
-    altura: Optional[float] = None
-    unidad: Optional[UnitEnum] = None
+    altura: Optional[float] = None  # Height in centimeters (same as Onboarding)
     imc: Optional[float] = None
     notas: Optional[str] = None
+
+    # Anthropometric Data - Skinfolds (in mm)
+    skinfold_triceps: Optional[float] = None
+    skinfold_subscapular: Optional[float] = None
+    skinfold_biceps: Optional[float] = None
+    skinfold_iliac_crest: Optional[float] = None
+    skinfold_supraspinal: Optional[float] = None
+    skinfold_abdominal: Optional[float] = None
+    skinfold_thigh: Optional[float] = None
+    skinfold_calf: Optional[float] = None
+
+    # Anthropometric Data - Girths (in cm)
+    girth_relaxed_arm: Optional[float] = None
+    girth_flexed_contracted_arm: Optional[float] = None
+    girth_waist_minimum: Optional[float] = None
+    girth_hips_maximum: Optional[float] = None
+    girth_medial_thigh: Optional[float] = None
+    girth_maximum_calf: Optional[float] = None
+
+    # Anthropometric Data - Diameters (in cm)
+    diameter_humerus_biepicondylar: Optional[float] = None
+    diameter_femur_bicondylar: Optional[float] = None
+    diameter_bi_styloid_wrist: Optional[float] = None
 
     @field_validator("peso")
     @classmethod
     def validate_weight(cls, v):
-        if v is not None and (v < 0 or v > 500):
-            raise ValueError("Weight must be between 0 and 500 kg")
+        if v is not None and (v < 20 or v > 300):
+            raise ValueError("Weight must be between 20 and 300 kg")
         return v
 
     @field_validator("altura")
     @classmethod
     def validate_height(cls, v):
-        if v is not None and (v < 0.5 or v > 3.0):
-            raise ValueError("Height must be between 0.5 and 3.0 meters")
+        """Validate height in centimeters (same as Onboarding)"""
+        if v is not None and (v < 100 or v > 250):
+            raise ValueError("Height must be between 100 and 250 cm")
+        return v
+
+    @model_validator(mode="after")
+    def calculate_bmi(self):
+        """Calculate BMI from weight (kg) and height (cm) if both provided"""
+        # Height is in cm, convert to meters for BMI calculation
+        if self.peso is not None and self.altura is not None:
+            altura_m = self.altura / 100  # Convert cm to meters
+            bmi = self.peso / (altura_m**2)
+            self.imc = round(bmi, 2)
+        elif self.peso is not None and self.altura is None:
+            self.imc = None
+        elif self.altura is not None and self.peso is None:
+            self.imc = None
+
+        # Validate BMI range
+        if self.imc is not None and (self.imc < 10 or self.imc > 60):
+            raise ValueError("BMI must be between 10 and 60")
+        return self
+
+    @field_validator(
+        "skinfold_triceps",
+        "skinfold_subscapular",
+        "skinfold_biceps",
+        "skinfold_iliac_crest",
+        "skinfold_supraspinal",
+        "skinfold_abdominal",
+        "skinfold_thigh",
+        "skinfold_calf",
+    )
+    @classmethod
+    def validate_skinfolds(cls, v):
+        if v is not None and (v < 0 or v > 50):
+            raise ValueError("Skinfold measurements must be between 0 and 50 mm")
+        return v
+
+    @field_validator(
+        "girth_relaxed_arm",
+        "girth_flexed_contracted_arm",
+        "girth_waist_minimum",
+        "girth_hips_maximum",
+        "girth_medial_thigh",
+        "girth_maximum_calf",
+    )
+    @classmethod
+    def validate_girths(cls, v):
+        if v is not None and (v < 10 or v > 200):
+            raise ValueError("Girth measurements must be between 10 and 200 cm")
+        return v
+
+    @field_validator(
+        "diameter_humerus_biepicondylar",
+        "diameter_femur_bicondylar",
+        "diameter_bi_styloid_wrist",
+    )
+    @classmethod
+    def validate_diameters(cls, v):
+        if v is not None and (v < 3 or v > 20):
+            raise ValueError("Diameter measurements must be between 3 and 20 cm")
         return v
 
 
@@ -647,21 +830,149 @@ class ClientProgressOut(BaseModel):
     id: int
     client_id: int
     fecha_registro: date
+    fecha_inicio_prueba: Optional[date] = None
     peso: Optional[float] = None
-    altura: Optional[float] = None
+    altura: Optional[float] = None  # Height in centimeters
     unidad: Optional[str] = None
     imc: Optional[float] = None
     notas: Optional[str] = None
+
+    # Anthropometric Data - Skinfolds (in mm)
+    skinfold_triceps: Optional[float] = None
+    skinfold_subscapular: Optional[float] = None
+    skinfold_biceps: Optional[float] = None
+    skinfold_iliac_crest: Optional[float] = None
+    skinfold_supraspinal: Optional[float] = None
+    skinfold_abdominal: Optional[float] = None
+    skinfold_thigh: Optional[float] = None
+    skinfold_calf: Optional[float] = None
+
+    # Anthropometric Data - Girths (in cm)
+    girth_relaxed_arm: Optional[float] = None
+    girth_flexed_contracted_arm: Optional[float] = None
+    girth_waist_minimum: Optional[float] = None
+    girth_hips_maximum: Optional[float] = None
+    girth_medial_thigh: Optional[float] = None
+    girth_maximum_calf: Optional[float] = None
+
+    # Anthropometric Data - Diameters (in cm)
+    diameter_humerus_biepicondylar: Optional[float] = None
+    diameter_femur_bicondylar: Optional[float] = None
+    diameter_bi_styloid_wrist: Optional[float] = None
+
+    # Body Composition Calculated Fields
+    body_fat_percentage: Optional[float] = None
+    muscle_mass_kg: Optional[float] = None
+    fat_free_mass_kg: Optional[float] = None
+
     created_at: datetime
     updated_at: datetime
     is_active: bool
-    model_config = {"from_attributes": True}
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @model_serializer(mode="plain")
+    def serialize_model(self):
+        """Custom serializer that safely excludes 'client' relationship.
+
+        Uses mode='plain' to manually build dict from model fields only,
+        avoiding any SQLAlchemy relationship access.
+        """
+        # Build dict manually from model fields only
+        result = {}
+        for field_name in self.model_fields.keys():
+            if field_name != "client":  # Explicitly exclude relationship
+                try:
+                    value = object.__getattribute__(self, field_name)
+                    result[field_name] = value
+                except (AttributeError, Exception):
+                    # Skip if field doesn't exist or can't be accessed
+                    pass
+        return result
 
 
 # Training Plan Schemas
+# Training Plan Template Schemas
+class TrainingPlanTemplateBase(BaseModel):
+    trainer_id: int
+    name: str
+    description: Optional[str] = None
+    goal: str
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    estimated_duration_weeks: Optional[int] = None
+
+
+class TrainingPlanTemplateCreate(TrainingPlanTemplateBase):
+    pass
+
+
+class TrainingPlanTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    goal: Optional[str] = None
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    estimated_duration_weeks: Optional[int] = None
+    is_public: Optional[bool] = None
+
+
+class TrainingPlanTemplateOut(TrainingPlanTemplateBase):
+    id: int
+    usage_count: int
+    success_rate: Optional[float] = None
+    is_template: bool
+    is_public: bool
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+
+    model_config = {"from_attributes": True}
+
+
+# Training Plan Instance Schemas
+class TrainingPlanInstanceBase(BaseModel):
+    template_id: Optional[int] = None
+    source_plan_id: Optional[int] = None
+    client_id: int
+    trainer_id: int
+    name: str
+    description: Optional[str] = None
+    start_date: date
+    end_date: date
+    goal: str
+    status: str = "active"
+    customizations: Optional[Dict] = None
+
+
+class TrainingPlanInstanceCreate(TrainingPlanInstanceBase):
+    pass
+
+
+class TrainingPlanInstanceUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    goal: Optional[str] = None
+    status: Optional[str] = None
+    customizations: Optional[Dict] = None
+
+
+class TrainingPlanInstanceOut(TrainingPlanInstanceBase):
+    id: int
+    assigned_at: datetime
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+
+    model_config = {"from_attributes": True}
+
+
+# Training Plan Schemas (Modified)
 class TrainingPlanBase(BaseModel):
     trainer_id: int
-    client_id: int
+    client_id: Optional[int] = None  # Made optional
     name: str
     description: Optional[str] = None
     start_date: date
@@ -684,6 +995,58 @@ class TrainingPlanUpdate(BaseModel):
 
 class TrainingPlanOut(TrainingPlanBase):
     id: int
+    template_id: Optional[int] = None
+    is_template: bool = False
+    can_be_reused: bool = True
+    was_converted_to_template: bool = False
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+# Milestone Schemas
+class MilestoneBase(BaseModel):
+    title: str
+    milestone_date: date
+    type: MilestoneTypeEnum = MilestoneTypeEnum.custom
+    notes: Optional[str] = None
+    importance: str = "medium"  # low, medium, high
+    reminder_offset_days: Optional[int] = None
+    done: bool = False
+
+    @field_validator("importance")
+    @classmethod
+    def validate_importance(cls, v):
+        if v not in ["low", "medium", "high"]:
+            raise ValueError("importance must be low, medium, or high")
+        return v
+
+
+class MilestoneCreate(MilestoneBase):
+    training_plan_id: Optional[int] = None  # Will be set from path
+
+
+class MilestoneUpdate(BaseModel):
+    title: Optional[str] = None
+    milestone_date: Optional[date] = None
+    type: Optional[MilestoneTypeEnum] = None
+    notes: Optional[str] = None
+    importance: Optional[str] = None
+    reminder_offset_days: Optional[int] = None
+    done: Optional[bool] = None
+
+    @field_validator("importance")
+    @classmethod
+    def validate_importance(cls, v):
+        if v is not None and v not in ["low", "medium", "high"]:
+            raise ValueError("importance must be low, medium, or high")
+        return v
+
+
+class MilestoneOut(MilestoneBase):
+    id: int
+    training_plan_id: int
     created_at: datetime
     updated_at: datetime
     is_active: bool
@@ -692,12 +1055,18 @@ class TrainingPlanOut(TrainingPlanBase):
 
 # Macrocycle Schemas
 class MacrocycleBase(BaseModel):
-    training_plan_id: int
+    training_plan_id: Optional[int] = None
+    template_id: Optional[int] = None
+    instance_id: Optional[int] = None
     name: str
     description: Optional[str] = None
     start_date: date
     end_date: date
     focus: str
+    # Coherence system fields (Adrián's requirement)
+    physical_quality: Optional[str] = None  # e.g., "Fuerza", "Power", "Aerobic", "Mobility"
+    volume: Optional[float] = None  # Float 1-10
+    intensity: Optional[float] = None  # Float 1-10
     volume_intensity_ratio: Optional[str] = None
 
 
@@ -731,12 +1100,17 @@ class MesocycleBase(BaseModel):
     duration_weeks: int
     primary_focus: str
     secondary_focus: Optional[str] = None
-    target_volume: Optional[str] = None
-    target_intensity: Optional[str] = None
+    # Coherence system fields (Adrián's requirement)
+    physical_quality: Optional[str] = None  # e.g., "Fuerza", "Power", "Aerobic", "Mobility"
+    volume: Optional[float] = None  # Float 1-10
+    intensity: Optional[float] = None  # Float 1-10
+    target_volume: Optional[str] = None  # Kept for backward compatibility
+    target_intensity: Optional[str] = None  # Kept for backward compatibility
 
 
 class MesocycleCreate(MesocycleBase):
-    pass
+    # Parent ID comes from path param in API; body field is optional
+    macrocycle_id: Optional[int] = None
 
 
 class MesocycleUpdate(BaseModel):
@@ -769,10 +1143,15 @@ class MicrocycleBase(BaseModel):
     training_frequency: int = 3
     deload_week: bool = False
     notes: Optional[str] = None
+    # Coherence system fields (Adrián's requirement)
+    physical_quality: Optional[str] = None  # e.g., "Fuerza", "Power", "Aerobic", "Mobility"
+    volume: Optional[float] = None  # Float 1-10
+    intensity: Optional[float] = None  # Float 1-10
 
 
 class MicrocycleCreate(MicrocycleBase):
-    pass
+    # Parent ID comes from path param in API; body field is optional
+    mesocycle_id: Optional[int] = None
 
 
 class MicrocycleUpdate(BaseModel):
@@ -791,6 +1170,331 @@ class MicrocycleOut(MicrocycleBase):
     updated_at: datetime
     is_active: bool
     model_config = {"from_attributes": True}
+
+
+# Aggregated cycles response
+class AllCyclesResponse(BaseModel):
+    macrocycles: List[MacrocycleOut]
+    mesocycles: List[MesocycleOut]
+    microcycles: List[MicrocycleOut]
+    model_config = {"from_attributes": True}
+
+
+# Metrics Schemas (Training Load & Planning)
+
+
+# Strength Load Calculation
+class StrengthIntensityIn(BaseModel):
+    """Intensity input for strength training - one of RIR, %1RM, or RPE."""
+
+    method: str  # "rir", "percent_1rm", "rpe"
+    value: float  # RIR (0-5), %1RM (65-100), or RPE (6-10)
+
+    @field_validator("method")
+    @classmethod
+    def validate_method(cls, v):
+        if v not in ["rir", "percent_1rm", "rpe"]:
+            raise ValueError("method must be rir, percent_1rm, or rpe")
+        return v
+
+
+class StrengthIntensityOut(BaseModel):
+    """Normalized intensity (0-1) from strength input."""
+
+    intensidad_normalizada: float  # 0-1
+    original_value: float
+    method: str
+
+
+class StrengthCalcIn(BaseModel):
+    volumen_relativo: float  # 0-1 (series per muscle group per week, normalized)
+    intensidad_method: str  # "rir", "percent_1rm", "rpe"
+    intensidad_value: float  # RIR (0-5), %1RM (65-100), or RPE (6-10)
+
+    @field_validator("volumen_relativo")
+    @classmethod
+    def _v01(cls, v):
+        if v < 0 or v > 1:
+            raise ValueError("volumen_relativo must be between 0 and 1")
+        return v
+
+    @field_validator("intensidad_method")
+    @classmethod
+    def _method(cls, v):
+        if v not in ["rir", "percent_1rm", "rpe"]:
+            raise ValueError("intensidad_method must be rir, percent_1rm, or rpe")
+        return v
+
+
+class StrengthCalcOut(BaseModel):
+    carga_fuerza: float  # 0-100
+
+
+# Intensity Normalization Helpers
+class IntensityNormalizeIn(BaseModel):
+    """Convert various intensity inputs to normalized 0-1 scale."""
+
+    # Methods: rpe, percent_fcmax, percent_vvo2max, zona_aerobica, rir,
+    # percent_1rm, percent_vmax, zona_anaerobica
+    method: str
+    value: float  # Value to normalize
+    zona: Optional[str] = None  # Required for zona_aerobica or zona_anaerobica
+
+    @field_validator("method")
+    @classmethod
+    def validate_method(cls, v):
+        valid_methods = [
+            "rpe",
+            "percent_fcmax",
+            "percent_vvo2max",
+            "zona_aerobica",
+            "rir",
+            "percent_1rm",
+            "percent_vmax",
+            "zona_anaerobica",
+        ]
+        if v not in valid_methods:
+            raise ValueError(f"method must be one of {valid_methods}")
+        return v
+
+
+class IntensityNormalizeOut(BaseModel):
+    intensidad_normalizada: float  # 0-1
+    original_value: float
+    method: str
+    zona: Optional[str] = None
+
+
+class AerobicCalcIn(BaseModel):
+    volumen_relativo: float  # 0-1
+    intensidad_normalizada: float  # 0-1
+    zona: str  # Z1-Z5
+
+    @field_validator("volumen_relativo", "intensidad_normalizada")
+    @classmethod
+    def _v01(cls, v):
+        if v < 0 or v > 1:
+            raise ValueError("Value must be between 0 and 1")
+        return v
+
+    @field_validator("zona")
+    @classmethod
+    def _vz(cls, v):
+        if v not in ["Z1", "Z2", "Z3", "Z4", "Z5"]:
+            raise ValueError("zona must be one of Z1-Z5")
+        return v
+
+
+class AerobicCalcOut(BaseModel):
+    carga_aerobica: float  # 0-100
+
+
+class AnaerobicCalcIn(BaseModel):
+    volumen_relativo: float  # 0-1
+    intensidad_normalizada: float  # 0-1
+    k_densidad: float = 1.0  # 1.0-1.5 typical
+    zona: str  # Z6 or Z7
+
+    @field_validator("volumen_relativo", "intensidad_normalizada")
+    @classmethod
+    def _v01(cls, v):
+        if v < 0 or v > 1:
+            raise ValueError("Value must be between 0 and 1")
+        return v
+
+    @field_validator("zona")
+    @classmethod
+    def _vz(cls, v):
+        if v not in ["Z6", "Z7"]:
+            raise ValueError("zona must be Z6 or Z7")
+        return v
+
+
+class AnaerobicCalcOut(BaseModel):
+    carga_anaerobica: float  # 0-100
+
+
+class CIDCalcIn(BaseModel):
+    volumen_level: int  # 1-10
+    intensidad_level: int  # 1-10
+    k_fase: float = 1.0  # 0.6-1.3 typical
+    p: float = 1.0  # optional exponent 1.0–1.3
+
+    @field_validator("volumen_level", "intensidad_level")
+    @classmethod
+    def _levels(cls, v):
+        if v < 1 or v > 10:
+            raise ValueError("Levels must be 1-10")
+        return v
+
+
+class CIDCalcOut(BaseModel):
+    cid_0_100: float
+
+
+class DailyCIDItem(BaseModel):
+    date: date
+    input: CIDCalcIn
+    cid_0_100: float
+
+
+class DailyMetricsRequest(BaseModel):
+    items: List[CIDCalcIn]
+    start_date: date
+
+
+class DailyMetricsResponse(BaseModel):
+    days: List[DailyCIDItem]
+
+
+# Aggregated per-trainer plans with cycles
+class PlanWithCycles(BaseModel):
+    plan: TrainingPlanOut
+    macrocycles: List[MacrocycleOut]
+    mesocycles: List[MesocycleOut]
+    microcycles: List[MicrocycleOut]
+    model_config = {"from_attributes": True}
+
+
+class PlansWithCyclesResponse(BaseModel):
+    items: List[PlanWithCycles]
+
+
+# Aggregation Schemas (weekly/monthly) and Total Load
+class WeeklyBucket(BaseModel):
+    week_start: date  # Monday (ISO)
+    cid_sum: float
+    cid_avg: float
+
+
+class WeeklyAggregateIn(BaseModel):
+    items: List[CIDCalcIn]
+    start_date: date
+
+
+class WeeklyAggregateOut(BaseModel):
+    buckets: List[WeeklyBucket]
+
+
+class MonthlyBucket(BaseModel):
+    month: int  # 1-12
+    cid_sum: float
+    cid_avg: float
+
+
+class MonthlyAggregateIn(BaseModel):
+    items: List[CIDCalcIn]
+    start_date: date
+    w_fase: Optional[float] = 1.0  # Phase weight for monthly aggregation (0.6-1.3)
+
+
+class MonthlyAggregateOut(BaseModel):
+    buckets: List[MonthlyBucket]
+
+
+# Volume Normalization Helpers (BLOQUE 4 - VOLUMEN GLOBAL ADAPTATIVO)
+class VolumeNormalizeIn(BaseModel):
+    """Convert volume level (1-10) to actual units based on experience."""
+
+    volume_level: int  # 1-10
+    experience: str  # "beginner", "intermediate", "advanced"
+    modality: str  # "strength", "aerobic", "anaerobic"
+    weekly_objective: Optional[float] = None  # Required for aerobic/anaerobic
+
+    @field_validator("volume_level")
+    @classmethod
+    def _level(cls, v):
+        if v < 1 or v > 10:
+            raise ValueError("volume_level must be 1-10")
+        return v
+
+    @field_validator("experience")
+    @classmethod
+    def _exp(cls, v):
+        if v not in ["beginner", "intermediate", "advanced"]:
+            raise ValueError("experience must be beginner, intermediate, or advanced")
+        return v
+
+    @field_validator("modality")
+    @classmethod
+    def _mod(cls, v):
+        if v not in ["strength", "aerobic", "anaerobic"]:
+            raise ValueError("modality must be strength, aerobic, or anaerobic")
+        return v
+
+
+class VolumeNormalizeOut(BaseModel):
+    """Normalized volume output."""
+
+    volume_level: int
+    volumen_relativo: float  # 0-1 normalized value
+    actual_units: (
+        float  # Series per week (strength), minutes (aerobic), seconds (anaerobic)
+    )
+    unit_type: str  # "series", "minutes", "seconds"
+    percentage_of_base: float  # Percentage of base range (20-100%)
+
+
+class TotalLoadIn(BaseModel):
+    c_fuerza: float  # 0-100
+    c_aerobica: float  # 0-100
+    c_anaerobica: float  # 0-100
+    p_fuerza: float  # 0-1
+    p_aerobica: float  # 0-1
+    p_anaerobica: float  # 0-1
+
+    @field_validator("c_fuerza", "c_aerobica", "c_anaerobica")
+    @classmethod
+    def _v0100(cls, v):
+        if v < 0 or v > 100:
+            raise ValueError("Load must be 0-100")
+        return v
+
+    @field_validator("p_fuerza", "p_aerobica", "p_anaerobica")
+    @classmethod
+    def _v01(cls, v):
+        if v < 0 or v > 1:
+            raise ValueError("Weight must be 0-1")
+        return v
+
+
+class TotalLoadOut(BaseModel):
+    ct_0_100: float
+    breakdown: dict
+
+
+# Alert Threshold Detection Schemas
+class ThresholdAlert(BaseModel):
+    type: str  # "daily_high", "weekly_high", "consecutive_high"
+    severity: str  # "medium", "high", "critical"
+    message: str
+    value: float
+    threshold: float
+    date: Optional[date] = None
+
+
+class ThresholdCheckIn(BaseModel):
+    items: List[CIDCalcIn]
+    start_date: date
+    daily_threshold: float = 80.0  # Alert if daily CID > this
+    weekly_threshold: float = 450.0  # Alert if weekly CID sum > this
+    consecutive_threshold: float = 70.0  # Alert if consecutive days > this
+    consecutive_days: int = 3  # Number of consecutive days to check
+    # Optional: create FatigueAlert records in database
+    create_alerts: bool = False
+    client_id: Optional[int] = None  # Required if create_alerts=True
+    trainer_id: Optional[int] = None  # Required if create_alerts=True
+
+
+class ThresholdCheckOut(BaseModel):
+    alerts: List[ThresholdAlert]
+    has_alerts: bool
+    daily_max: float
+    weekly_max: float
+    consecutive_max: int
+    created_fatigue_alerts: Optional[int] = (
+        None  # Count of FatigueAlert records created
+    )
 
 
 # Training Session Schemas
@@ -912,8 +1616,34 @@ class ClientFeedbackBase(BaseModel):
         return v
 
 
-class ClientFeedbackCreate(ClientFeedbackBase):
-    pass
+class ClientFeedbackCreate(BaseModel):
+    # training_session_id is set from URL, so make it optional here
+    training_session_id: Optional[int] = None
+    client_id: int
+    perceived_effort: Optional[int] = None
+    fatigue_level: Optional[int] = None
+    sleep_quality: Optional[int] = None
+    stress_level: Optional[int] = None
+    motivation_level: Optional[int] = None
+    energy_level: Optional[int] = None
+    muscle_soreness: Optional[str] = None
+    pain_or_discomfort: Optional[str] = None
+    notes: Optional[str] = None
+    feedback_date: datetime
+
+    @field_validator(
+        "perceived_effort",
+        "fatigue_level",
+        "sleep_quality",
+        "stress_level",
+        "motivation_level",
+        "energy_level",
+    )
+    @classmethod
+    def validate_scale_scores(cls, v):
+        if v is not None and (v < 1 or v > 10):
+            raise ValueError("Scale scores must be between 1 and 10")
+        return v
 
 
 class ClientFeedbackUpdate(BaseModel):
@@ -933,7 +1663,23 @@ class ClientFeedbackOut(ClientFeedbackBase):
     created_at: datetime
     updated_at: datetime
     is_active: bool
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
+
+    @model_serializer(mode="plain")
+    def serialize_model(self):
+        """Custom serializer that safely excludes relationships.
+        Uses mode='plain' to manually build dict from model fields only,
+        avoiding any SQLAlchemy relationship access.
+        """
+        result = {}
+        for field_name in self.model_fields.keys():
+            if field_name not in ["client", "training_session"]:
+                try:
+                    value = object.__getattribute__(self, field_name)
+                    result[field_name] = value
+                except (AttributeError, Exception):
+                    pass
+        return result
 
 
 # Progress Tracking Schemas
