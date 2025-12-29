@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from enum import Enum
 from typing import Dict, List, Optional
 
@@ -6,6 +6,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     EmailStr,
+    Field,
     field_validator,
     model_serializer,
     model_validator,
@@ -44,6 +45,18 @@ class ClientProfileBase(BaseModel):
     experiencia: Optional[ExperienceEnum] = None
     lesiones_relevantes: Optional[str] = None
     frecuencia_semanal: Optional[WeeklyFrequencyEnum] = None
+    # Exact training frequency
+    exact_training_frequency: Optional[int] = Field(
+        None, ge=1, le=7, description="Exact number of training days per week (1-7)"
+    )
+    # Specific training days
+    training_days: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Optional: Specific days of the week to train "
+            "(e.g., ['Monday', 'Wednesday', 'Friday'])"
+        ),
+    )
 
     # Additional Personal Information
     id_passport: Optional[str] = None
@@ -71,6 +84,34 @@ class ClientProfileBase(BaseModel):
     diameter_humerus_biepicondylar: Optional[float] = None
     diameter_femur_bicondylar: Optional[float] = None
     diameter_bi_styloid_wrist: Optional[float] = None
+
+    # Somatotype (Heath-Carter method, values 1.0-7.0 for each component)
+    # Auto-calculated from anthropometric data, but can be manually overridden
+    somatotype_endomorph: Optional[float] = Field(
+        None, description="Endomorphic component of somatotype (1-7)"
+    )
+    somatotype_mesomorph: Optional[float] = Field(
+        None, description="Mesomorphic component of somatotype (1-7)"
+    )
+    somatotype_ectomorph: Optional[float] = Field(
+        None, description="Ectomorphic component of somatotype (1-7)"
+    )
+
+    @field_validator(
+        "somatotype_endomorph",
+        "somatotype_mesomorph",
+        "somatotype_ectomorph",
+        mode="before",
+    )
+    @classmethod
+    def validate_somatotype_range(cls, v):
+        """Validate somatotype values are in range 1.0-7.0, or None."""
+        if v is not None:
+            if not isinstance(v, (int, float)):
+                raise ValueError("Somatotype value must be a number")
+            if not (1.0 <= float(v) <= 7.0):
+                raise ValueError("Somatotype values must be between 1.0 and 7.0")
+        return v
 
     # Program Meta Fields
     objective: Optional[str] = None
@@ -108,6 +149,39 @@ class ClientProfileBase(BaseModel):
             digits_only = "".join(filter(str.isdigit, v))
             if len(digits_only) < 7 or len(digits_only) > 15:
                 raise ValueError("Phone number must have between 7 and 15 digits")
+        return v
+
+    @field_validator("training_days")
+    @classmethod
+    def validate_training_days(cls, v):
+        """Validate training days are valid day names."""
+        if v is None:
+            return v
+        valid_days = {
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun",
+        }
+        for day in v:
+            if day not in valid_days and day.lower() not in [
+                d.lower() for d in valid_days
+            ]:
+                raise ValueError(
+                    f"Invalid day name: {day}. Must be one of: "
+                    f"Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday "
+                    f"(or Mon, Tue, Wed, Thu, Fri, Sat, Sun)"
+                )
         return v
 
     @field_validator(
@@ -186,6 +260,18 @@ class ClientProfileUpdate(BaseModel):
     experiencia: Optional[ExperienceEnum] = None
     lesiones_relevantes: Optional[str] = None
     frecuencia_semanal: Optional[WeeklyFrequencyEnum] = None
+    # Exact training frequency
+    exact_training_frequency: Optional[int] = Field(
+        None, ge=1, le=7, description="Exact number of training days per week (1-7)"
+    )
+    # Specific training days
+    training_days: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Optional: Specific days of the week to train "
+            "(e.g., ['Monday', 'Wednesday', 'Friday'])"
+        ),
+    )
 
     # Additional Personal Information
     id_passport: Optional[str] = None
@@ -298,6 +384,21 @@ class ClientProfileUpdate(BaseModel):
         return v
 
 
+class ClientPreviewResponse(BaseModel):
+    """Response for client preview endpoint (calculated values only)"""
+
+    bmi: Optional[float] = Field(
+        None,
+        description=(
+            "Calculated BMI (Body Mass Index) - only if weight and height provided"
+        ),
+    )
+    somatotype: Dict[str, Optional[float]] = Field(
+        ...,
+        description="Calculated somatotype values (endomorph, mesomorph, ectomorph)",
+    )
+
+
 class ClientProfileOut(ClientProfileBase):
     id: int
     fecha_alta: date
@@ -333,6 +434,155 @@ class ClientListResponse(BaseModel):
     page_size: int
     has_more: bool
     model_config = {"from_attributes": True}
+
+
+# Enhanced Client List with Fatigue and Adherence
+class ClientListItem(BaseModel):
+    """Client list item with fatigue and adherence for dashboard view"""
+
+    id: int
+    nombre: str
+    apellidos: str
+    mail: str
+    fatigue_level: Optional[str] = (
+        None  # "Perfect", "Exhausted", "Slightly Tired", "Very Tired"
+    )
+    fatigue_level_numeric: Optional[int] = None  # 1-10 scale for sorting
+    adherence_percentage: Optional[float] = None  # 0-100
+    model_config = {"from_attributes": True}
+
+
+class ClientListWithMetricsResponse(BaseModel):
+    """Client list response with fatigue and adherence metrics"""
+
+    items: List[ClientListItem]
+    total: int
+    page: int
+    page_size: int
+    has_more: bool
+
+
+# Recent Activity Feed
+class RecentActivityItem(BaseModel):
+    """Single activity item in the feed"""
+
+    id: int
+    type: str  # "session_completed", "client_added", "session_scheduled",
+    # "goal_achieved", "test_completed"
+    actor_name: str  # Client or trainer name
+    description: str  # Human-readable description
+    timestamp: datetime
+    client_id: Optional[int] = None
+    session_id: Optional[int] = None
+    icon: Optional[str] = None  # Icon identifier for UI
+
+
+class RecentActivityResponse(BaseModel):
+    """Recent activity feed response"""
+
+    items: List[RecentActivityItem]
+    total: int
+
+
+class ClientImprovementStats(BaseModel):
+    average: float
+    trend: str
+    sample_size: Optional[int] = None
+    source: str = "mock"
+    note: Optional[str] = None
+
+
+class ClientSatisfactionStats(BaseModel):
+    rating: float
+    total_reviews: int
+    trend: str
+    source: str = "mock"
+    note: Optional[str] = None
+
+
+# Client Rating Schemas
+class ClientRatingBase(BaseModel):
+    client_id: int
+    trainer_id: Optional[int] = None
+    rating: int  # 1-5 scale
+    comment: Optional[str] = None
+    rating_type: str = "general"  # "general", "session", "program", "trainer"
+    session_id: Optional[int] = None
+
+    @field_validator("rating")
+    @classmethod
+    def validate_rating(cls, v):
+        if v < 1 or v > 5:
+            raise ValueError("Rating must be between 1 and 5")
+        return v
+
+    @field_validator("rating_type")
+    @classmethod
+    def validate_rating_type(cls, v):
+        allowed_types = ["general", "session", "program", "trainer"]
+        if v not in allowed_types:
+            raise ValueError(f"rating_type must be one of {allowed_types}")
+        return v
+
+
+class ClientRatingCreate(ClientRatingBase):
+    pass
+
+
+class ClientRatingUpdate(BaseModel):
+    rating: Optional[int] = None
+    comment: Optional[str] = None
+
+    @field_validator("rating")
+    @classmethod
+    def validate_rating(cls, v):
+        if v is not None and (v < 1 or v > 5):
+            raise ValueError("Rating must be between 1 and 5")
+        return v
+
+
+class ClientRatingOut(ClientRatingBase):
+    id: int
+    rating_date: datetime
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PlanAdherenceStats(BaseModel):
+    adherence_percentage: float
+    trend: str
+    aligned_plans: Optional[int] = None
+    total_plans: Optional[int] = None
+    source: str = "mock"
+    note: Optional[str] = None
+
+
+class ClientProgressCategoryStats(BaseModel):
+    on_track: int
+    behind_schedule: int
+    need_attention: int
+    overall_percentage: float
+    updated_at: datetime
+    source: str = "mock"
+    note: Optional[str] = None
+
+
+class BillingStatBucket(BaseModel):
+    label: str
+    revenue: float
+    clients: int
+    growth: float
+    currency: str = "EUR"
+
+
+class BillingStatsResponse(BaseModel):
+    period: str
+    items: List[BillingStatBucket]
+    source: str = "mock"
+    note: Optional[str] = None
 
 
 class TrainerBase(BaseModel):
@@ -425,6 +675,7 @@ class ExerciseBase(BaseModel):
     tipo_carga: str
     musculatura_principal: str
     musculatura_secundaria: Optional[str] = None
+    laterality: Optional[str] = None  # bilateral, unilateral, alternating
     descripcion: Optional[str] = None
     instrucciones: Optional[str] = None
     notas: Optional[str] = None
@@ -450,6 +701,37 @@ class ExerciseBase(BaseModel):
             raise ValueError("Primary muscles cannot be empty")
         return v.strip()
 
+    @field_validator("tipo")
+    @classmethod
+    def validate_tipo(cls, v):
+        """Validate exercise category (tipo) - must be one of:
+        monoarticular, multiarticular, complex
+        """
+        if not v:
+            raise ValueError("Exercise type (tipo) cannot be empty")
+        v_clean = v.strip().lower()
+        valid_types = ["monoarticular", "multiarticular", "complex"]
+        if v_clean not in valid_types:
+            raise ValueError(
+                f"Exercise type must be one of: {', '.join(valid_types)}. Got: {v}"
+            )
+        # Return the lowercase value for consistency
+        return v_clean
+
+    @field_validator("laterality")
+    @classmethod
+    def validate_laterality(cls, v):
+        """Validate laterality - must be one of: bilateral, unilateral, alternating"""
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        valid_laterality = ["bilateral", "unilateral", "alternating"]
+        if v_clean not in valid_laterality:
+            raise ValueError(
+                f"Laterality must be one of: {', '.join(valid_laterality)}. Got: {v}"
+            )
+        return v_clean
+
 
 class ExerciseCreate(ExerciseBase):
     pass
@@ -467,6 +749,7 @@ class ExerciseUpdate(BaseModel):
     tipo_carga: Optional[str] = None
     musculatura_principal: Optional[str] = None
     musculatura_secundaria: Optional[str] = None
+    laterality: Optional[str] = None
     descripcion: Optional[str] = None
     instrucciones: Optional[str] = None
     notas: Optional[str] = None
@@ -901,6 +1184,43 @@ class TrainingPlanTemplateBase(BaseModel):
     category: Optional[str] = None
     tags: Optional[List[str]] = None
     estimated_duration_weeks: Optional[int] = None
+    # Generic plan duration support
+    duration_value: Optional[int] = Field(
+        None, ge=1, description="Duration value (e.g., 3)"
+    )
+    duration_unit: Optional[str] = Field(
+        None, description="Duration unit: 'days', 'weeks', or 'months'"
+    )
+    # Folder hierarchy and classification (Requirement A)
+    folder_name: Optional[str] = Field(
+        None, max_length=100, description="Folder/organization by objective"
+    )
+    level: Optional[str] = Field(
+        None,
+        description="Level classification: 'beginner', 'intermediate', or 'advanced'",
+    )
+    training_days_per_week: Optional[int] = Field(
+        None, ge=1, le=7, description="Number of training days per week"
+    )
+    # Generic plan flag (Requirement C)
+    is_generic: bool = Field(
+        default=False,
+        description="If True, template includes training sessions (generic plan)",
+    )
+
+    @field_validator("duration_unit")
+    @classmethod
+    def validate_duration_unit(cls, v):
+        if v is not None and v not in ["days", "weeks", "months"]:
+            raise ValueError("duration_unit must be 'days', 'weeks', or 'months'")
+        return v
+
+    @field_validator("level")
+    @classmethod
+    def validate_level(cls, v):
+        if v is not None and v not in ["beginner", "intermediate", "advanced"]:
+            raise ValueError("level must be 'beginner', 'intermediate', or 'advanced'")
+        return v
 
 
 class TrainingPlanTemplateCreate(TrainingPlanTemplateBase):
@@ -915,6 +1235,43 @@ class TrainingPlanTemplateUpdate(BaseModel):
     tags: Optional[List[str]] = None
     estimated_duration_weeks: Optional[int] = None
     is_public: Optional[bool] = None
+    # Generic plan duration support
+    duration_value: Optional[int] = Field(
+        None, ge=1, description="Duration value (e.g., 3)"
+    )
+    duration_unit: Optional[str] = Field(
+        None, description="Duration unit: 'days', 'weeks', or 'months'"
+    )
+    # Folder hierarchy and classification (Requirement A)
+    folder_name: Optional[str] = Field(
+        None, max_length=100, description="Folder/organization by objective"
+    )
+    level: Optional[str] = Field(
+        None,
+        description="Level classification: 'beginner', 'intermediate', or 'advanced'",
+    )
+    training_days_per_week: Optional[int] = Field(
+        None, ge=1, le=7, description="Number of training days per week"
+    )
+    # Generic plan flag (Requirement C)
+    is_generic: Optional[bool] = Field(
+        None,
+        description="If True, template includes training sessions (generic plan)",
+    )
+
+    @field_validator("duration_unit")
+    @classmethod
+    def validate_duration_unit(cls, v):
+        if v is not None and v not in ["days", "weeks", "months"]:
+            raise ValueError("duration_unit must be 'days', 'weeks', or 'months'")
+        return v
+
+    @field_validator("level")
+    @classmethod
+    def validate_level(cls, v):
+        if v is not None and v not in ["beginner", "intermediate", "advanced"]:
+            raise ValueError("level must be 'beginner', 'intermediate', or 'advanced'")
+        return v
 
 
 class TrainingPlanTemplateOut(TrainingPlanTemplateBase):
@@ -979,6 +1336,7 @@ class TrainingPlanBase(BaseModel):
     end_date: date
     goal: str
     status: str = "active"
+    tags: Optional[List[str]] = None
 
 
 class TrainingPlanCreate(TrainingPlanBase):
@@ -991,6 +1349,7 @@ class TrainingPlanUpdate(BaseModel):
     end_date: Optional[date] = None
     goal: Optional[str] = None
     status: Optional[str] = None
+    tags: Optional[List[str]] = None
 
 
 class TrainingPlanOut(TrainingPlanBase):
@@ -1053,21 +1412,154 @@ class MilestoneOut(MilestoneBase):
     model_config = {"from_attributes": True}
 
 
+class TrainingPlanDistributionItem(BaseModel):
+    name: str
+    percentage: float
+
+
+class TrainingLoadSummary(BaseModel):
+    volume_level: float
+    intensity_level: float
+
+
+class MonthlyTrainingProgress(BaseModel):
+    month: int  # 1-12
+    qualities: List[TrainingPlanDistributionItem]
+    volume_level: float
+    intensity_level: float
+
+
+class TrainingPlanSummaryStats(BaseModel):
+    total_sessions_planned: int
+    sessions_completed: int
+    adherence_rate: float
+    narrative: str
+
+
+class ClientTrainingPlanSummary(BaseModel):
+    client_id: int
+    year: int
+    has_active_plan: bool
+    plan_name: Optional[str] = None
+    plan_goal: Optional[str] = None
+    distribution: List[TrainingPlanDistributionItem]
+    physical_qualities: List[TrainingPlanDistributionItem]
+    training_load: TrainingLoadSummary
+    yearly_progression: List[MonthlyTrainingProgress]
+    summary: TrainingPlanSummaryStats
+    milestones: List[MilestoneOut] = Field(default_factory=list)
+
+
+class TrainingPlanQualityAverage(BaseModel):
+    name: str
+    planned_percentage: float
+    actual_percentage: float
+    status: str  # "on_track" (green) or "below_target" (red)
+
+
+class PlannedVsActualComparison(BaseModel):
+    planned_volume: float
+    actual_volume: float
+    volume_status: str  # "on_track" (green) or "below_target" (red)
+    planned_intensity: float
+    actual_intensity: float
+    intensity_status: str  # "on_track" (green) or "below_target" (red)
+    qualities: List[TrainingPlanQualityAverage]
+
+
+class MonthlyWeekBreakdown(BaseModel):
+    week: int
+    start_date: date
+    end_date: date
+    qualities: List[TrainingPlanDistributionItem]
+    volume_level: float
+    intensity_level: float
+
+
+class TrainingPlanMonthlySummary(BaseModel):
+    client_id: int
+    year: int
+    month: int
+    has_active_plan: bool
+    plan_name: Optional[str] = None
+    plan_goal: Optional[str] = None
+    distribution: List[TrainingPlanDistributionItem]
+    physical_qualities: List[TrainingPlanDistributionItem]
+    training_load: TrainingLoadSummary
+    plan_alignment: float
+    planned_vs_actual: PlannedVsActualComparison
+    weeks: List[MonthlyWeekBreakdown]
+    summary: TrainingPlanSummaryStats
+
+
+class WeeklySessionEntry(BaseModel):
+    session_id: int
+    session_date: date
+    session_name: str
+    session_type: Optional[str] = None
+    status: str
+    planned_volume: Optional[float] = None
+    planned_intensity: Optional[float] = None
+    actual_volume: Optional[float] = None
+    actual_intensity: Optional[float] = None
+
+
+class DailyProgressionPoint(BaseModel):
+    """Daily breakdown for weekly progression chart (Mon-Sun)"""
+
+    day_name: str  # "Mon", "Tue", etc.
+    date: date
+    qualities: List[TrainingPlanDistributionItem]  # For stacked bars
+    volume_level: float  # For volume line graph
+    intensity_level: float  # For intensity line graph
+
+
+class TrainingPlanWeeklySummary(BaseModel):
+    client_id: int
+    week_start: date
+    week_end: date
+    has_active_plan: bool
+    plan_name: Optional[str] = None
+    plan_goal: Optional[str] = None
+    distribution: List[TrainingPlanDistributionItem]
+    physical_qualities: List[TrainingPlanDistributionItem]
+    training_load: TrainingLoadSummary
+    plan_alignment: float
+    daily_progression: List[DailyProgressionPoint]
+    planned_vs_actual: PlannedVsActualComparison
+    sessions: List[WeeklySessionEntry]
+    summary: TrainingPlanSummaryStats
+
+
 # Macrocycle Schemas
+# Macrocycle Schemas (1 Macrocycle = 1 Year = 12 months)
 class MacrocycleBase(BaseModel):
     training_plan_id: Optional[int] = None
     template_id: Optional[int] = None
     instance_id: Optional[int] = None
-    name: str
+    name: str  # e.g., "2025"
     description: Optional[str] = None
-    start_date: date
-    end_date: date
+    start_date: date  # First day of year (e.g., Jan 1)
+    end_date: date  # Last day of year (e.g., Dec 31)
     focus: str
-    # Coherence system fields (Adrián's requirement)
-    physical_quality: Optional[str] = None  # e.g., "Fuerza", "Power", "Aerobic", "Mobility"
-    volume: Optional[float] = None  # Float 1-10
-    intensity: Optional[float] = None  # Float 1-10
+    # Coherence system fields
+    physical_quality: Optional[str] = None
+    volume: Optional[float] = None
+    intensity: Optional[float] = None
     volume_intensity_ratio: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_calendar_year(self):
+        """1 Macrocycle = 1 Year (365-366 days)"""
+        if self.start_date and self.end_date:
+            if self.end_date < self.start_date:
+                raise ValueError("end_date must be after start_date")
+            days = (self.end_date - self.start_date).days + 1
+            if days < 365 or days > 366:
+                raise ValueError(
+                    f"Macrocycle must be 1 year (365-366 days). Got {days} days"
+                )
+        return self
 
 
 class MacrocycleCreate(MacrocycleBase):
@@ -1080,6 +1572,10 @@ class MacrocycleUpdate(BaseModel):
     end_date: Optional[date] = None
     focus: Optional[str] = None
     volume_intensity_ratio: Optional[str] = None
+    # Coherence system fields (bottom-up planning support)
+    physical_quality: Optional[str] = None
+    volume: Optional[float] = Field(None, ge=1.0, le=10.0)
+    intensity: Optional[float] = Field(None, ge=1.0, le=10.0)
 
 
 class MacrocycleOut(MacrocycleBase):
@@ -1090,26 +1586,38 @@ class MacrocycleOut(MacrocycleBase):
     model_config = {"from_attributes": True}
 
 
-# Mesocycle Schemas
+# Mesocycle Schemas (1 Mesocycle = 1 Calendar Month)
 class MesocycleBase(BaseModel):
     macrocycle_id: int
-    name: str
+    name: str  # e.g., "January 2025"
     description: Optional[str] = None
-    start_date: date
-    end_date: date
-    duration_weeks: int
+    start_date: date  # First day of month (e.g., Jan 1)
+    end_date: date  # Last day of month (e.g., Jan 31)
+    duration_weeks: int = 4  # ~4 weeks per month
     primary_focus: str
     secondary_focus: Optional[str] = None
-    # Coherence system fields (Adrián's requirement)
-    physical_quality: Optional[str] = None  # e.g., "Fuerza", "Power", "Aerobic", "Mobility"
-    volume: Optional[float] = None  # Float 1-10
-    intensity: Optional[float] = None  # Float 1-10
-    target_volume: Optional[str] = None  # Kept for backward compatibility
-    target_intensity: Optional[str] = None  # Kept for backward compatibility
+    # Coherence system fields
+    physical_quality: Optional[str] = None
+    volume: Optional[float] = None
+    intensity: Optional[float] = None
+    target_volume: Optional[str] = None
+    target_intensity: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_calendar_month(self):
+        """1 Mesocycle = 1 Calendar Month (28-31 days)"""
+        if self.start_date and self.end_date:
+            if self.end_date < self.start_date:
+                raise ValueError("end_date must be after start_date")
+            days = (self.end_date - self.start_date).days + 1
+            if days < 28 or days > 31:
+                raise ValueError(
+                    f"Mesocycle must be 1 calendar month (28-31 days). Got {days} days"
+                )
+        return self
 
 
 class MesocycleCreate(MesocycleBase):
-    # Parent ID comes from path param in API; body field is optional
     macrocycle_id: Optional[int] = None
 
 
@@ -1122,6 +1630,12 @@ class MesocycleUpdate(BaseModel):
     secondary_focus: Optional[str] = None
     target_volume: Optional[str] = None
     target_intensity: Optional[str] = None
+    # Coherence system fields (bottom-up planning support)
+    physical_quality: Optional[str] = None
+    volume: Optional[float] = Field(None, ge=1.0, le=10.0)
+    intensity: Optional[float] = Field(None, ge=1.0, le=10.0)
+    # Bottom-up propagation: recalculate parent macrocycle from all mesocycles
+    propagate_up: bool = False
 
 
 class MesocycleOut(MesocycleBase):
@@ -1132,25 +1646,39 @@ class MesocycleOut(MesocycleBase):
     model_config = {"from_attributes": True}
 
 
-# Microcycle Schemas
+# Microcycle Schemas (1 Microcycle = 1 Week = 7 days)
 class MicrocycleBase(BaseModel):
     mesocycle_id: int
-    name: str
+    name: str  # e.g., "Week 1", "Jan 6-12"
     description: Optional[str] = None
-    start_date: date
-    end_date: date
-    duration_days: int = 7
-    training_frequency: int = 3
+    start_date: date  # First day of week (e.g., Monday)
+    end_date: date  # Last day of week (e.g., Sunday)
+    duration_days: int = 7  # Always 7 days
+    training_frequency: int = Field(default=3, ge=1, le=7)  # Sessions per week
     deload_week: bool = False
     notes: Optional[str] = None
-    # Coherence system fields (Adrián's requirement)
-    physical_quality: Optional[str] = None  # e.g., "Fuerza", "Power", "Aerobic", "Mobility"
-    volume: Optional[float] = None  # Float 1-10
-    intensity: Optional[float] = None  # Float 1-10
+    # Coherence system fields
+    physical_quality: Optional[str] = None
+    volume: Optional[float] = None
+    intensity: Optional[float] = None
+
+    @model_validator(mode="after")
+    def validate_calendar_week(self):
+        """1 Microcycle = 1 Week = exactly 7 days"""
+        if self.start_date and self.end_date:
+            if self.end_date < self.start_date:
+                raise ValueError("end_date must be after start_date")
+            days = (self.end_date - self.start_date).days + 1
+            if days != 7:
+                raise ValueError(
+                    f"Microcycle must be exactly 7 days (1 week). Got {days} days"
+                )
+        if self.duration_days != 7:
+            raise ValueError("duration_days must be 7 (1 week)")
+        return self
 
 
 class MicrocycleCreate(MicrocycleBase):
-    # Parent ID comes from path param in API; body field is optional
     mesocycle_id: Optional[int] = None
 
 
@@ -1158,10 +1686,15 @@ class MicrocycleUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     end_date: Optional[date] = None
-    duration_days: Optional[int] = None
-    training_frequency: Optional[int] = None
+    # duration_days is fixed to 7, not editable
+    training_frequency: Optional[int] = Field(None, ge=1, le=7)
     deload_week: Optional[bool] = None
     notes: Optional[str] = None
+    # Coherence system fields
+    physical_quality: Optional[str] = None
+    volume: Optional[float] = Field(None, ge=1.0, le=10.0)
+    intensity: Optional[float] = Field(None, ge=1.0, le=10.0)
+    propagate_up: bool = False
 
 
 class MicrocycleOut(MicrocycleBase):
@@ -1177,7 +1710,307 @@ class AllCyclesResponse(BaseModel):
     macrocycles: List[MacrocycleOut]
     mesocycles: List[MesocycleOut]
     microcycles: List[MicrocycleOut]
+
+
+class BatchCyclesRequest(BaseModel):
+    plan_ids: List[int]
+
+
+class BatchCyclesResponse(BaseModel):
+    cycles: dict[int, AllCyclesResponse]  # plan_id -> cycles
+    errors: dict[int, str] = {}  # plan_id -> error message
+
+
+# Training Plan Alignment Schemas
+class CycleAlignmentPoint(BaseModel):
+    """Single point in alignment graph: physical quality, volume, intensity."""
+
+    cycle_id: int
+    cycle_type: str  # "macrocycle", "mesocycle", "microcycle"
+    cycle_name: str
+    date: date
+    physical_quality: Optional[str] = None
+    volume: Optional[float] = None  # 1-10
+    intensity: Optional[float] = None  # 1-10
+
+
+class ParentCycleValues(BaseModel):
+    """Parent cycle values shown when planning at child level"""
+
+    physical_quality: Optional[str] = None
+    volume: Optional[float] = None
+    intensity: Optional[float] = None
+    cycle_name: str
+    start_date: date
+    end_date: date
+
+
+class TrainingPlanAlignmentOut(BaseModel):
+    """Alignment data for training plan showing parent values and all cycles"""
+
+    plan_id: int
+    plan_name: str
+    # Parent values for monthly planning (from yearly/macrocycle)
+    yearly_values: Optional[ParentCycleValues] = None
+    # Parent values for weekly planning (from monthly/mesocycle)
+    monthly_values: Optional[ParentCycleValues] = None
+    # All cycles for graph visualization
+    alignment_graph: List[CycleAlignmentPoint]
+
+
+# Planning Endpoints Schemas
+class PlanningCycleItem(BaseModel):
+    """Single cycle in planning view with editable fields"""
+
+    cycle_id: int
+    cycle_type: str  # "macrocycle", "mesocycle", "microcycle"
+    name: str
+    start_date: date
+    end_date: date
+    physical_quality: Optional[str] = None
+    volume: Optional[float] = None  # 1-10
+    intensity: Optional[float] = None  # 1-10
+    has_values: bool  # True if volume/intensity are set
+    inherited: bool  # True if values are inherited from parent
+
+
+class PlanningDistributionItem(BaseModel):
+    """Physical quality distribution item"""
+
+    name: str
+    percentage: float  # 0-100
+    cycle_ids: List[int]  # IDs of cycles with this quality
+
+
+class PlanningLoadSummary(BaseModel):
+    """Volume and intensity summary"""
+
+    volume_level: float  # 1-10
+    intensity_level: float  # 1-10
+    cycle_ids: List[int]  # IDs of cycles included in calculation
+
+
+class PlanningYearlyResponse(BaseModel):
+    """Yearly planning view"""
+
+    plan_id: int
+    plan_name: str
+    year: int
+    distribution: List[PlanningDistributionItem]
+    training_load: PlanningLoadSummary
+    cycles: List[PlanningCycleItem]  # All macrocycles for the year
+    monthly_progression: List[Dict]  # Month-by-month breakdown
+
+
+class PlanningMonthlyResponse(BaseModel):
+    """Monthly planning view"""
+
+    plan_id: int
+    plan_name: str
+    year: int
+    month: int
+    distribution: List[PlanningDistributionItem]
+    training_load: PlanningLoadSummary
+    cycles: List[PlanningCycleItem]  # All mesocycles for the month
+    weekly_progression: List[Dict]  # Week-by-week breakdown
+
+
+class PlanningWeeklyResponse(BaseModel):
+    """Weekly planning view"""
+
+    plan_id: int
+    plan_name: str
+    week_start: date
+    week_end: date
+    distribution: List[PlanningDistributionItem]
+    training_load: PlanningLoadSummary
+    cycles: List[PlanningCycleItem]  # All microcycles for the week
+    daily_progression: List[Dict]  # Day-by-day breakdown
+
+
+class DistributionUpdateItem(BaseModel):
+    """Single physical quality distribution update"""
+
+    name: str
+    percentage: float  # 0-100
+
+
+class DistributionUpdateRequest(BaseModel):
+    """Request to update physical qualities distribution"""
+
+    cycle_ids: List[int]  # IDs of cycles to update
+    distribution: List[DistributionUpdateItem]  # Must sum to 100%
+    cascade: bool = True  # If True, update child cycles too
+
+    @field_validator("distribution")
+    def validate_distribution_sum(cls, v):
+        total = sum(item.percentage for item in v)
+        if abs(total - 100.0) > 0.01:  # Allow small floating point errors
+            raise ValueError(f"Distribution percentages must sum to 100%, got {total}%")
+        return v
+
+
+class LoadUpdateRequest(BaseModel):
+    """Request to update volume/intensity"""
+
+    cycle_ids: List[int]  # IDs of cycles to update
+    physical_quality: Optional[str] = None  # Optional: filter by quality
+    volume: Optional[float] = Field(None, ge=1.0, le=10.0)
+    intensity: Optional[float] = Field(None, ge=1.0, le=10.0)
+    cascade: bool = True  # If True, update child cycles too
+
+
+# Bottom-Up Sync Schemas
+class CycleRecalculationResult(BaseModel):
+    """Result of recalculating a single cycle from its children"""
+
+    cycle_id: int
+    cycle_type: str  # "mesocycle" or "macrocycle"
+    cycle_name: str
+    previous_volume: Optional[float] = None
+    previous_intensity: Optional[float] = None
+    new_volume: Optional[float] = None
+    new_intensity: Optional[float] = None
+    children_count: int
+    changed: bool
+
+
+class BottomUpSyncResponse(BaseModel):
+    """Response from bottom-up sync operation"""
+
+    plan_id: int
+    mesocycles_updated: int
+    macrocycles_updated: int
+    total_changes: int
+    recalculations: List[CycleRecalculationResult]
+    message: str
+
+
+# Scheduling Schemas
+class TrainerAvailabilityBase(BaseModel):
+    trainer_id: int
+    day_of_week: int  # 0=Monday, 1=Tuesday, ..., 6=Sunday
+    start_time: time  # e.g., 09:00
+    end_time: time  # e.g., 17:00
+    is_recurring: bool = True
+    specific_date: Optional[date] = None
+
+
+class TrainerAvailabilityCreate(TrainerAvailabilityBase):
+    pass
+
+
+class TrainerAvailabilityUpdate(BaseModel):
+    day_of_week: Optional[int] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    is_recurring: Optional[bool] = None
+    specific_date: Optional[date] = None
+    is_active: Optional[bool] = None
+
+
+class TrainerAvailabilityOut(TrainerAvailabilityBase):
+    id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
     model_config = {"from_attributes": True}
+
+
+class ScheduledSessionBase(BaseModel):
+    trainer_id: int
+    client_id: int
+    scheduled_date: date
+    start_time: time
+    end_time: time
+    duration_minutes: int
+    session_type: str  # "training", "consultation", "assessment"
+    notes: Optional[str] = None
+    location: Optional[str] = None
+    meeting_link: Optional[str] = None
+
+
+class ScheduledSessionCreate(ScheduledSessionBase):
+    pass
+
+
+class ScheduledSessionUpdate(BaseModel):
+    scheduled_date: Optional[date] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    duration_minutes: Optional[int] = None
+    session_type: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+    location: Optional[str] = None
+    meeting_link: Optional[str] = None
+
+
+class ScheduledSessionOut(ScheduledSessionBase):
+    id: int
+    status: str
+    reminder_sent: bool
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class ConflictCheckRequest(BaseModel):
+    trainer_id: int
+    scheduled_date: date
+    start_time: time
+    end_time: time
+    exclude_session_id: Optional[int] = None  # For updates
+
+
+class ConflictCheckResponse(BaseModel):
+    has_conflict: bool
+    conflicts: List[ScheduledSessionOut] = []
+    available: bool
+
+
+class AvailableSlotsRequest(BaseModel):
+    trainer_id: int
+    date: date
+
+
+class AvailableSlot(BaseModel):
+    start_time: time
+    end_time: time
+    duration_minutes: int
+
+
+class AvailableSlotsResponse(BaseModel):
+    date: date
+    available_slots: List[AvailableSlot]
+
+
+# Report Generation Schemas
+class ReportType(str, Enum):
+    client_progress = "client_progress"
+    training_summary = "training_summary"
+    daily_coherence = "daily_coherence"
+    billing_summary = "billing_summary"
+    attendance_report = "attendance_report"
+
+
+class ReportRequest(BaseModel):
+    report_type: ReportType
+    client_id: Optional[int] = None
+    trainer_id: Optional[int] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    format: str = "json"  # "json" or "pdf"
+
+
+class ReportResponse(BaseModel):
+    report_id: str
+    report_type: str
+    generated_at: datetime
+    download_url: Optional[str] = None
+    format: str  # "json" or "pdf"
+    data: Optional[Dict] = None
 
 
 # Metrics Schemas (Training Load & Planning)
@@ -1315,16 +2148,26 @@ class AnaerobicCalcOut(BaseModel):
 
 
 class CIDCalcIn(BaseModel):
-    volumen_level: int  # 1-10
-    intensidad_level: int  # 1-10
-    k_fase: float = 1.0  # 0.6-1.3 typical
-    p: float = 1.0  # optional exponent 1.0–1.3
+    volumen_level: float  # 1.0-10.0 (accepts decimals like 6.5, 7.8)
+    intensidad_level: float  # 1.0-10.0 (accepts decimals like 6.5, 7.8)
+    # k_fase: Descarga=0.8, Acumulacion=1.0, Intensificacion=1.2, Competicion=1.3
+    k_fase: float = 1.0
+    # k_experiencia: Beginner=0.8, Intermediate=1.0, Advanced=1.1
+    k_experiencia: float = 1.0
+    p: float = 1.0  # Exponent 1.0-1.3 (higher = more weight on intensity)
 
     @field_validator("volumen_level", "intensidad_level")
     @classmethod
     def _levels(cls, v):
-        if v < 1 or v > 10:
-            raise ValueError("Levels must be 1-10")
+        if v < 1.0 or v > 10.0:
+            raise ValueError("Levels must be between 1.0 and 10.0")
+        return round(float(v), 1)  # Limit to 1 decimal for consistency
+
+    @field_validator("k_experiencia")
+    @classmethod
+    def _k_exp_range(cls, v):
+        if v < 0.7 or v > 1.2:
+            raise ValueError("k_experiencia must be between 0.7 and 1.2")
         return v
 
 
@@ -1502,9 +2345,23 @@ class TrainingSessionBase(BaseModel):
     microcycle_id: int
     client_id: int
     trainer_id: int
-    session_date: date
+    session_date: Optional[date] = None  # Nullable for generic plans
     session_name: str
     session_type: str
+    # Generic plan support
+    training_day_number: Optional[int] = Field(
+        None, ge=1, description="Day number for generic plans (Day 1, Day 2, etc.)"
+    )
+    is_generic_session: Optional[bool] = Field(
+        default=False, description="True = day number, False = real date"
+    )
+
+    @field_validator("is_generic_session", mode="before")
+    @classmethod
+    def convert_none_to_false(cls, v):
+        """Convert NULL from database to False"""
+        return v if v is not None else False
+
     planned_duration: Optional[int] = None
     actual_duration: Optional[int] = None
     # Session programming enhancements
@@ -1523,8 +2380,17 @@ class TrainingSessionCreate(TrainingSessionBase):
 class TrainingSessionUpdate(BaseModel):
     session_name: Optional[str] = None
     session_type: Optional[str] = None
+    # Allow changing session date for drag-drop functionality
+    session_date: Optional[date] = None
+    training_day_number: Optional[int] = Field(
+        None, ge=1, description="Day number for generic plans"
+    )
     planned_duration: Optional[int] = None
     actual_duration: Optional[int] = None
+    planned_intensity: Optional[float] = None
+    planned_volume: Optional[float] = None
+    actual_intensity: Optional[float] = None
+    actual_volume: Optional[float] = None
     status: Optional[str] = None
     notes: Optional[str] = None
 
@@ -2001,7 +2867,10 @@ class FatigueAlertBase(BaseModel):
     client_id: int
     trainer_id: int
     fatigue_analysis_id: Optional[int] = None
-    alert_type: str  # "overtraining", "recovery_needed", "session_adjustment"
+    # overtraining/recovery/session_adjustment already existed; attendance and
+    # plan_deviation extend this model to cover Adrián's Alerts section.
+    # See _validate_alert_type for the full list of allowed values.
+    alert_type: str
     severity: str  # "low", "medium", "high", "critical"
     title: str
     message: str
@@ -2015,7 +2884,13 @@ class FatigueAlertBase(BaseModel):
     @field_validator("alert_type")
     @classmethod
     def _validate_alert_type(cls, v):
-        valid_types = ["overtraining", "recovery_needed", "session_adjustment"]
+        valid_types = [
+            "overtraining",
+            "recovery_needed",
+            "session_adjustment",
+            "attendance",
+            "plan_deviation",
+        ]
         if v not in valid_types:
             raise ValueError(f"Alert type must be one of: {valid_types}")
         return v
@@ -2182,6 +3057,7 @@ class SessionTemplateOut(SessionTemplateBase):
     created_at: datetime
     updated_at: datetime
     is_active: bool
+    exercise_count: Optional[int] = None  # Number of exercises in template
     model_config = {"from_attributes": True}
 
 
@@ -2339,3 +3215,1106 @@ class SessionSummaryOut(BaseModel):
     planned_volume: Optional[float] = None
     actual_intensity: Optional[float] = None
     actual_volume: Optional[float] = None
+
+
+# Daily Coherence Analytics Schemas
+class SRPEPoint(BaseModel):
+    """Single point in sRPE scatter plot"""
+
+    prescribed_srpe: float  # X-axis: planned intensity (0-10)
+    perceived_srpe: float  # Y-axis: perceived effort from feedback (0-10)
+    session_date: date
+    session_id: int
+
+
+class WeeklyMonotonyStrain(BaseModel):
+    """Weekly monotony and strain metrics"""
+
+    week_start: date
+    monotony: float  # Daily mean / Standard deviation
+    strain: float  # Weekly load × Monotony
+    weekly_load: float  # Sum of daily loads for the week
+    cumulative_strain: float  # Running total of strain across weeks
+
+
+class MonotonyStrainDataPoint(BaseModel):
+    """Flexible monotony and strain metrics for any granularity"""
+
+    period_start: date  # Start of the period (day/week/month/year)
+    period_label: (
+        str  # Human-readable label (e.g., "2025-01-15", "W3", "Jan 2025", "2025")
+    )
+    monotony: float  # Mean / Standard deviation
+    strain: float  # Period load × Monotony
+    period_load: float  # Sum of daily loads for the period
+    cumulative_strain: float  # Running total of strain across periods
+
+
+class DailyCoherenceKPIs(BaseModel):
+    """KPI cards for Daily Coherence tab"""
+
+    adherence_percentage: float  # (Completed / Planned) × 100
+    average_srpe: float  # Average perceived sRPE
+    monotony: float  # Current week monotony
+    strain: float  # Current week strain
+
+
+class DailyCoherenceAnalyticsOut(BaseModel):
+    """Complete coherence analytics response"""
+
+    client_id: int
+    period_start: date
+    period_end: date
+    period_type: str  # "week", "month", "training_block", "year"
+    kpis: DailyCoherenceKPIs
+    adherence_data: List[Dict]  # For donut/bar chart: [{period: str, adherence: float}]
+    srpe_scatter_data: List[SRPEPoint]  # For scatter plot
+    monotony_strain_data: List[
+        MonotonyStrainDataPoint
+    ]  # For line/area chart (granularity depends on period_type)
+    interpretive_summary: str  # Auto-generated text analysis
+    key_recommendations: List[str]  # Actionable recommendations
+
+
+# Physical Testing Schemas (Testing Tab)
+class PhysicalTestBase(BaseModel):
+    name: str
+    category: str  # "strength", "power", "speed", "aerobic", "anaerobic", "mobility"
+    description: Optional[str] = None
+    unit: str  # "kg", "cm", "s", "ml/kg/min", "°"
+    is_standard: bool = True
+    default_frequency_weeks: Optional[int] = None
+    formula: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class PhysicalTestCreate(PhysicalTestBase):
+    created_by_trainer_id: Optional[int] = None
+
+
+class PhysicalTestUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    unit: Optional[str] = None
+    default_frequency_weeks: Optional[int] = None
+    formula: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class PhysicalTestOut(PhysicalTestBase):
+    id: int
+    created_by_trainer_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class PhysicalTestResultBase(BaseModel):
+    client_id: int
+    test_id: int
+    trainer_id: int
+    test_date: date
+    value: float
+    unit: str
+    is_baseline: bool = False
+    notes: Optional[str] = None
+    surface: Optional[str] = None
+    conditions: Optional[str] = None
+
+
+class PhysicalTestResultCreate(PhysicalTestResultBase):
+    pass
+
+
+class PhysicalTestResultUpdate(BaseModel):
+    test_date: Optional[date] = None
+    value: Optional[float] = None
+    unit: Optional[str] = None
+    is_baseline: Optional[bool] = None
+    notes: Optional[str] = None
+    surface: Optional[str] = None
+    conditions: Optional[str] = None
+
+
+class PhysicalTestResultOut(PhysicalTestResultBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class TestResultWithProgress(PhysicalTestResultOut):
+    """Test result with progress calculations"""
+
+    baseline_value: Optional[float] = None
+    baseline_date: Optional[date] = None
+    progress_percentage: Optional[float] = None  # % change from baseline
+    trend: Optional[str] = None  # "improving", "stable", "declining"
+
+
+class PhysicalQualityProfile(BaseModel):
+    """Radar chart data for physical qualities"""
+
+    strength: float  # 0-100 score
+    power: float
+    speed: float
+    aerobic: float
+    anaerobic: float
+    mobility: float
+
+
+class TestTrendPoint(BaseModel):
+    """Single point in a test trend chart"""
+
+    test_date: date
+    value: float
+    unit: str
+    progress_percentage: Optional[float] = None
+    test_name: str
+    test_id: int
+
+
+class RepetitionData(BaseModel):
+    """Data for a single repetition in a test session"""
+
+    repetition_number: int  # 1, 2, 3, etc.
+    value: float
+    unit: str
+
+
+class FatigueAnalysis(BaseModel):
+    """Fatigue analysis for tests with multiple repetitions"""
+
+    best_value: float
+    worst_value: float
+    fatigue_index_percentage: float  # ((worst - best) / best) * 100
+    acceptable_range: Optional[str] = None  # e.g., "acceptable range", "high fatigue"
+
+
+class CategoryTrendData(BaseModel):
+    """Trend data for a test category"""
+
+    category: str
+    test_name: str
+    test_id: int
+    trend_points: List[TestTrendPoint]
+    baseline_value: Optional[float] = None
+    baseline_date: Optional[date] = None
+    test_frequency_weeks: Optional[int] = None  # Default frequency for this test
+    latest_surface: Optional[str] = (
+        None  # Surface from most recent test result (e.g., "Track", "Treadmill")
+    )
+    latest_repetitions: Optional[List[RepetitionData]] = (
+        None  # For tests with multiple reps (e.g., RSA)
+    )
+    latest_fatigue_analysis: Optional[FatigueAnalysis] = (
+        None  # Calculated from latest repetitions
+    )
+
+
+class BilateralComparisonPoint(BaseModel):
+    """Bilateral comparison data for a joint"""
+
+    joint: str  # e.g., "Ankle", "Knee", "Hip", "Shoulder", "Elbow"
+    left_value: Optional[float] = None
+    right_value: Optional[float] = None
+    unit: str  # e.g., "°"
+
+
+class ClientTestingSummary(BaseModel):
+    """Summary of all test results for a client"""
+
+    client_id: int
+    physical_quality_profile: PhysicalQualityProfile
+    latest_tests_by_category: Dict[str, Optional[TestResultWithProgress]]
+    category_trends: List[CategoryTrendData]  # Trend data for charts
+    upcoming_tests: List[Dict]  # Tests due for repetition
+    profile_analysis: str  # Auto-generated analysis text
+    bilateral_comparison: Optional[List[BilateralComparisonPoint]] = (
+        None  # For mobility tests: joint ROM left vs right
+    )
+
+
+# =============================================================================
+# GYM & EQUIPMENT INVENTORY SCHEMAS
+# =============================================================================
+
+
+class GymBase(BaseModel):
+    name: str
+    address: Optional[str] = None
+
+
+class GymCreate(GymBase):
+    pass
+
+
+class GymUpdate(BaseModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+
+
+class GymOut(GymBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+# --- Trainer-Gym Assignment (many-to-many) ---
+
+
+class TrainerGymAssign(BaseModel):
+    """Assign a trainer to a gym"""
+
+    trainer_id: int
+    gym_id: int
+    role: Optional[str] = None  # e.g., "employee", "contractor"
+
+
+class TrainerGymOut(BaseModel):
+    """Trainer-Gym relationship output"""
+
+    trainer_id: int
+    gym_id: int
+    assigned_at: datetime
+    role: Optional[str] = None
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class InventoryItemBase(BaseModel):
+    name: str
+    quantity: int = 1
+    condition: Optional[str] = None  # "New", "Worn", etc.
+    is_available: bool = True
+
+
+class InventoryItemCreate(InventoryItemBase):
+    gym_id: Optional[int] = None
+    trainer_id: Optional[int] = None
+
+
+class InventoryItemUpdate(BaseModel):
+    name: Optional[str] = None
+    quantity: Optional[int] = None
+    condition: Optional[str] = None
+    is_available: Optional[bool] = None
+
+
+class InventoryItemOut(InventoryItemBase):
+    id: int
+    gym_id: Optional[int] = None
+    trainer_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class ClientEquipmentBase(BaseModel):
+    name: str
+    quantity: int = 1
+    condition: Optional[str] = None
+    is_available: bool = True
+    notes: Optional[str] = None
+
+
+class ClientEquipmentCreate(ClientEquipmentBase):
+    trainer_id: Optional[int] = None  # Admin can specify; trainers are auto-resolved
+
+
+class ClientEquipmentUpdate(BaseModel):
+    name: Optional[str] = None
+    quantity: Optional[int] = None
+    condition: Optional[str] = None
+    is_available: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class ClientEquipmentOut(ClientEquipmentBase):
+    id: int
+    client_id: int
+    trainer_id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+# =============================================================================
+# JOINT & INJURY SYSTEM SCHEMAS (Biomechanical Model)
+# =============================================================================
+
+
+class JointBase(BaseModel):
+    name: str  # e.g., "Knee", "Shoulder", "Hip"
+    name_es: Optional[str] = None  # e.g., "Rodilla", "Hombro", "Cadera"
+
+
+class JointCreate(JointBase):
+    pass
+
+
+class JointOut(JointBase):
+    id: int
+    created_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class JointMovementBase(BaseModel):
+    # Kept for backward compatibility
+    name: str  # e.g., "Flexion", "Extension", "Abduction"
+    # Primary English name
+    name_en: str  # e.g., "Flexion", "Extension", "Abduction"
+    name_es: Optional[str] = None  # e.g., "Flexión", "Extensión", "Abducción"
+
+
+class JointMovementCreate(JointMovementBase):
+    pass
+
+
+class JointMovementOut(JointMovementBase):
+    id: int
+    created_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class MuscleBase(BaseModel):
+    name: str  # e.g., "Quadriceps", "Hamstrings"
+    name_es: Optional[str] = None  # e.g., "Cuádriceps", "Isquiotibiales"
+    joint_id: Optional[int] = None  # Primary joint this muscle acts on
+
+
+class MuscleCreate(MuscleBase):
+    pass
+
+
+class MuscleOut(MuscleBase):
+    id: int
+    created_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class MuscleActionBase(BaseModel):
+    muscle_id: int
+    action_type: str  # "concentric", "eccentric", "isometric"
+    is_primary: bool = True
+
+
+class MuscleActionCreate(MuscleActionBase):
+    pass
+
+
+class MuscleActionOut(MuscleActionBase):
+    id: int
+    created_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class ExerciseJointActionBase(BaseModel):
+    exercise_id: int
+    joint_id: int
+    joint_movement_id: int
+    action_id: Optional[int] = None
+    muscle_id: Optional[int] = None
+    role: Optional[str] = None  # primary, secondary
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate role - must be primary or secondary"""
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        valid_roles = ["primary", "secondary"]
+        if v_clean not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}. Got: {v}")
+        return v_clean
+
+
+class ExerciseJointActionCreate(ExerciseJointActionBase):
+    pass
+
+
+class ExerciseJointActionOut(ExerciseJointActionBase):
+    id: int
+    created_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+# Client Injury (Structured - NO free text for joint/action)
+class ClientInjuryBase(BaseModel):
+    client_id: int
+    joint_id: int  # Select from dropdown
+    painful_movement_id: int  # Select from dropdown
+    pain_level: int = Field(ge=1, le=5)  # 1-5 scale
+    severity: str  # "mild", "moderate", "severe"
+    restrictions: Optional[List[str]] = None  # Actions to avoid
+    notes: Optional[str] = None
+    is_active: bool = True
+
+
+class ClientInjuryCreate(ClientInjuryBase):
+    pass
+
+
+class ClientInjuryUpdate(BaseModel):
+    joint_id: Optional[int] = None
+    painful_movement_id: Optional[int] = None
+    pain_level: Optional[int] = Field(None, ge=1, le=5)
+    severity: Optional[str] = None
+    restrictions: Optional[List[str]] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ClientInjuryOut(ClientInjuryBase):
+    id: int
+    start_date: date
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+
+# Injury with related data (for display)
+class ClientInjuryWithDetails(ClientInjuryOut):
+    joint_name: Optional[str] = None
+    joint_name_es: Optional[str] = None
+    movement_name: Optional[str] = None
+    movement_name_es: Optional[str] = None
+
+
+# =============================================================================
+# EXERCISE ALTERNATIVES SCHEMAS
+# =============================================================================
+
+
+class ExerciseAlternativeBase(BaseModel):
+    exercise_id: int
+    alternative_exercise_id: int
+    priority: int = 1  # 1 = first choice, 2 = second choice, etc.
+    notes: Optional[str] = None
+
+
+class ExerciseAlternativeCreate(ExerciseAlternativeBase):
+    pass
+
+
+class ExerciseAlternativeUpdate(BaseModel):
+    priority: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class ExerciseAlternativeOut(ExerciseAlternativeBase):
+    id: int
+    created_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+# Alternative with exercise details (for display)
+class ExerciseAlternativeWithDetails(ExerciseAlternativeOut):
+    alternative_exercise_name: Optional[str] = None
+    alternative_exercise_equipo: Optional[str] = None
+
+
+# =============================================================================
+# INJURY ALERT SCHEMAS
+# =============================================================================
+
+
+class InjuryAlertCheck(BaseModel):
+    """Request to check if an exercise conflicts with client injuries"""
+
+    client_id: int
+    exercise_id: int
+
+
+class InjuryAlert(BaseModel):
+    """Alert when exercise conflicts with client injury"""
+
+    has_conflict: bool
+    severity: Optional[str] = None  # "warning", "danger"
+    message: Optional[str] = None
+    injury_details: Optional[ClientInjuryWithDetails] = None
+    conflicting_movement: Optional[str] = None
+
+
+# =============================================================================
+# EXERCISE SELECTION RECOMMENDATIONS (70% Multi-joint / 30% Single-joint)
+# =============================================================================
+
+
+class ExerciseSelectionRecommendation(BaseModel):
+    """
+    Recommendation for exercise type distribution in a session.
+    Based on Adrián's guideline: 70% multi-joint / 30% single-joint
+    """
+
+    total_exercises: int
+    recommended_multi_joint: int  # 70% of total
+    recommended_single_joint: int  # 30% of total
+    multi_joint_percentage: float = 70.0
+    single_joint_percentage: float = 30.0
+    explanation: str
+
+
+class SessionExerciseAnalysis(BaseModel):
+    """Analysis of exercise types in a session"""
+
+    session_id: Optional[int] = None
+    total_exercises: int
+    multi_joint_count: int
+    single_joint_count: int
+    other_count: int  # Complejo, Accesorio, etc.
+    actual_multi_joint_percentage: float
+    actual_single_joint_percentage: float
+    recommended_multi_joint: int
+    recommended_single_joint: int
+    is_balanced: bool  # True if within acceptable range (±10%)
+    deviation_message: Optional[str] = None
+    suggestions: List[str] = []
+
+
+class ExerciseTypeCount(BaseModel):
+    """Count of exercises by type"""
+
+    tipo: str
+    count: int
+    percentage: float
+
+
+# =============================================================================
+# NEW EXCEL STRUCTURE SCHEMAS
+# =============================================================================
+
+
+# Movement Pattern Schemas
+class MovementPatternBase(BaseModel):
+    name_en: str
+    name_es: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator("name_en")
+    @classmethod
+    def validate_name_en(cls, v):
+        if not v or len(v.strip()) == 0:
+            raise ValueError("English name cannot be empty")
+        return v.strip()
+
+
+class MovementPatternCreate(MovementPatternBase):
+    pass
+
+
+class MovementPatternUpdate(BaseModel):
+    name_en: Optional[str] = None
+    name_es: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class MovementPatternOut(MovementPatternBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+# Muscle Group Schemas
+class MuscleGroupBase(BaseModel):
+    name_en: str
+    name_es: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator("name_en")
+    @classmethod
+    def validate_name_en(cls, v):
+        if not v or len(v.strip()) == 0:
+            raise ValueError("English name cannot be empty")
+        return v.strip()
+
+
+class MuscleGroupCreate(MuscleGroupBase):
+    pass
+
+
+class MuscleGroupUpdate(BaseModel):
+    name_en: Optional[str] = None
+    name_es: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class MuscleGroupOut(MuscleGroupBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+# Equipment Schemas
+class EquipmentBase(BaseModel):
+    name_en: str
+    name_es: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator("name_en")
+    @classmethod
+    def validate_name_en(cls, v):
+        if not v or len(v.strip()) == 0:
+            raise ValueError("English name cannot be empty")
+        return v.strip()
+
+
+class EquipmentCreate(EquipmentBase):
+    pass
+
+
+class EquipmentUpdate(BaseModel):
+    name_en: Optional[str] = None
+    name_es: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class EquipmentOut(EquipmentBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+# Tag Schemas
+class TagBase(BaseModel):
+    name_en: str
+    name_es: Optional[str] = None
+    category: Optional[str] = None  # e.g., "difficulty", "goal"
+
+    @field_validator("name_en")
+    @classmethod
+    def validate_name_en(cls, v):
+        if not v or len(v.strip()) == 0:
+            raise ValueError("English name cannot be empty")
+        return v.strip()
+
+
+class TagCreate(TagBase):
+    pass
+
+
+class TagUpdate(BaseModel):
+    name_en: Optional[str] = None
+    name_es: Optional[str] = None
+    category: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class TagOut(TagBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+# Exercise Variant Schemas
+class ExerciseVariantBase(BaseModel):
+    base_exercise_id: int
+    # variant_type: equipment, grip, stance, position, tempo,
+    # range_of_motion, load_type, assistance, execution_style, pause
+    variant_type: str
+    name_en: str
+    name_es: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator("variant_type")
+    @classmethod
+    def validate_variant_type(cls, v):
+        """Validate variant type - must be one of the allowed types from Excel"""
+        if not v:
+            raise ValueError("Variant type cannot be empty")
+        v_clean = v.strip().lower()
+        valid_types = [
+            "equipment",
+            "grip",
+            "stance",
+            "position",
+            "tempo",
+            "range_of_motion",
+            "load_type",
+            "assistance",
+            "execution_style",
+            "pause",
+        ]
+        if v_clean not in valid_types:
+            raise ValueError(
+                f"Variant type must be one of: {', '.join(valid_types)}. Got: {v}"
+            )
+        return v_clean
+
+    @field_validator("name_en")
+    @classmethod
+    def validate_name_en(cls, v):
+        if not v or len(v.strip()) == 0:
+            raise ValueError("English name cannot be empty")
+        return v.strip()
+
+
+class ExerciseVariantCreate(ExerciseVariantBase):
+    pass
+
+
+class ExerciseVariantUpdate(BaseModel):
+    variant_type: Optional[str] = None
+    name_en: Optional[str] = None
+    name_es: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+    @field_validator("variant_type")
+    @classmethod
+    def validate_variant_type(cls, v):
+        """Validate variant type - must be one of the allowed types from Excel"""
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        valid_types = [
+            "equipment",
+            "grip",
+            "stance",
+            "position",
+            "tempo",
+            "range_of_motion",
+            "load_type",
+            "assistance",
+            "execution_style",
+            "pause",
+        ]
+        if v_clean not in valid_types:
+            raise ValueError(
+                f"Variant type must be one of: {', '.join(valid_types)}. Got: {v}"
+            )
+        return v_clean
+
+
+class ExerciseVariantOut(ExerciseVariantBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+# Variant Mapping Table Schemas
+class VariantEquipmentBase(BaseModel):
+    variant_id: int
+    equipment_id: int
+    role: Optional[str] = None  # primary, secondary
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate role - must be primary or secondary"""
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        valid_roles = ["primary", "secondary"]
+        if v_clean not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}. Got: {v}")
+        return v_clean
+
+
+class VariantEquipmentCreate(VariantEquipmentBase):
+    pass
+
+
+class VariantEquipmentUpdate(BaseModel):
+    variant_id: Optional[int] = None
+    equipment_id: Optional[int] = None
+    role: Optional[str] = None
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate role - must be primary or secondary"""
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        valid_roles = ["primary", "secondary"]
+        if v_clean not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}. Got: {v}")
+        return v_clean
+
+
+class VariantEquipmentOut(VariantEquipmentBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class VariantJointActionBase(BaseModel):
+    variant_id: int
+    joint_id: int
+    action_id: Optional[int] = None
+    role: Optional[str] = None  # primary, secondary
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate role - must be primary or secondary"""
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        valid_roles = ["primary", "secondary"]
+        if v_clean not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}. Got: {v}")
+        return v_clean
+
+
+class VariantJointActionCreate(VariantJointActionBase):
+    pass
+
+
+class VariantJointActionUpdate(BaseModel):
+    variant_id: Optional[int] = None
+    joint_id: Optional[int] = None
+    action_id: Optional[int] = None
+    role: Optional[str] = None
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate role - must be primary or secondary"""
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        valid_roles = ["primary", "secondary"]
+        if v_clean not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}. Got: {v}")
+        return v_clean
+
+
+class VariantJointActionOut(VariantJointActionBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class VariantMovementPatternBase(BaseModel):
+    variant_id: int
+    movement_pattern_id: int
+    role: Optional[str] = None  # primary, secondary
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate role - must be primary or secondary"""
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        valid_roles = ["primary", "secondary"]
+        if v_clean not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}. Got: {v}")
+        return v_clean
+
+
+class VariantMovementPatternCreate(VariantMovementPatternBase):
+    pass
+
+
+class VariantMovementPatternUpdate(BaseModel):
+    variant_id: Optional[int] = None
+    movement_pattern_id: Optional[int] = None
+    role: Optional[str] = None
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate role - must be primary or secondary"""
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        valid_roles = ["primary", "secondary"]
+        if v_clean not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}. Got: {v}")
+        return v_clean
+
+
+class VariantMovementPatternOut(VariantMovementPatternBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class VariantMuscleBase(BaseModel):
+    variant_id: int
+    muscle_id: int
+    role: str  # prime_mover, synergist, stabilizer
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate role - must be prime_mover, synergist, or stabilizer"""
+        if v is None:
+            raise ValueError("Role is required for variant-muscle mappings")
+        v_clean = v.strip().lower()
+        valid_roles = ["prime_mover", "synergist", "stabilizer"]
+        if v_clean not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}. Got: {v}")
+        return v_clean
+
+
+class VariantMuscleCreate(VariantMuscleBase):
+    pass
+
+
+class VariantMuscleUpdate(BaseModel):
+    variant_id: Optional[int] = None
+    muscle_id: Optional[int] = None
+    role: Optional[str] = None
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate role - must be prime_mover, synergist, or stabilizer"""
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        valid_roles = ["prime_mover", "synergist", "stabilizer"]
+        if v_clean not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}. Got: {v}")
+        return v_clean
+
+
+class VariantMuscleOut(VariantMuscleBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class VariantTagBase(BaseModel):
+    variant_id: int
+    tag_id: int
+
+
+class VariantTagCreate(VariantTagBase):
+    pass
+
+
+class VariantTagUpdate(BaseModel):
+    variant_id: Optional[int] = None
+    tag_id: Optional[int] = None
+
+
+class VariantTagOut(VariantTagBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+# Mapping Table Schemas
+class ExerciseMovementPatternBase(BaseModel):
+    exercise_id: int
+    movement_pattern_id: int
+    role: Optional[str] = None  # primary, secondary
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate role - must be primary or secondary"""
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        valid_roles = ["primary", "secondary"]
+        if v_clean not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}. Got: {v}")
+        return v_clean
+
+
+class ExerciseMovementPatternCreate(ExerciseMovementPatternBase):
+    pass
+
+
+class ExerciseMovementPatternOut(ExerciseMovementPatternBase):
+    id: int
+    model_config = {"from_attributes": True}
+
+
+class ExerciseMuscleBase(BaseModel):
+    exercise_id: int
+    muscle_id: int
+    role: str  # prime_mover, synergist, stabilizer
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate role - must be prime_mover, synergist, or stabilizer"""
+        if not v:
+            raise ValueError("Role cannot be empty")
+        v_clean = v.strip().lower()
+        valid_roles = ["prime_mover", "synergist", "stabilizer"]
+        if v_clean not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}. Got: {v}")
+        return v_clean
+
+
+class ExerciseMuscleCreate(ExerciseMuscleBase):
+    pass
+
+
+class ExerciseMuscleOut(ExerciseMuscleBase):
+    id: int
+    model_config = {"from_attributes": True}
+
+
+class ExerciseEquipmentBase(BaseModel):
+    exercise_id: int
+    equipment_id: int
+
+
+class ExerciseEquipmentCreate(ExerciseEquipmentBase):
+    pass
+
+
+class ExerciseEquipmentOut(ExerciseEquipmentBase):
+    id: int
+    model_config = {"from_attributes": True}
+
+
+class ExerciseTagBase(BaseModel):
+    exercise_id: int
+    tag_id: int
+
+
+class ExerciseTagCreate(ExerciseTagBase):
+    pass
+
+
+class ExerciseTagOut(ExerciseTagBase):
+    id: int
+    model_config = {"from_attributes": True}

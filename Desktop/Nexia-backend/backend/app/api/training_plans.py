@@ -1,10 +1,11 @@
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import crud, schemas
 from ..auth.deps import (
+    get_current_payload,
     require_trainer_or_admin,
     require_visible_for_optional_client_id,
 )
@@ -12,6 +13,22 @@ from ..db import models
 from ..db.session import get_db
 
 router = APIRouter()
+
+
+def _resolve_trainer_scope(
+    db: Session, payload: dict, override_trainer_id: Optional[int] = None
+) -> Optional[int]:
+    role = payload.get("role")
+    if role == "admin":
+        return override_trainer_id
+    if role == "trainer":
+        trainer = (
+            db.query(models.Trainer)
+            .filter(models.Trainer.user_id == payload.get("user_id"))
+            .first()
+        )
+        return trainer.id if trainer else None
+    return None
 
 
 # Training Plans
@@ -53,6 +70,22 @@ def get_training_plans(
         raise HTTPException(
             status_code=400, detail="Must specify either trainer_id or client_id"
         )
+
+
+@router.get(
+    "/adherence-stats",
+    response_model=schemas.PlanAdherenceStats,
+    dependencies=[Depends(require_trainer_or_admin)],
+)
+def get_training_plan_adherence_stats(
+    trainer_id: Optional[int] = Query(
+        None, description="Admin-only: override scope with specific trainer_id"
+    ),
+    db: Session = Depends(get_db),
+    payload: dict = Depends(get_current_payload),
+):
+    resolved_trainer_id = _resolve_trainer_scope(db, payload, trainer_id)
+    return crud.get_plan_adherence_stats(db=db, trainer_id=resolved_trainer_id)
 
 
 @router.get(
@@ -208,6 +241,115 @@ def get_all_cycles(plan_id: int, db: Session = Depends(get_db)):
     return schemas.AllCyclesResponse(
         macrocycles=macrocycles, mesocycles=mesocycles, microcycles=microcycles
     )
+
+
+@router.post(
+    "/batch-cycles",
+    response_model=schemas.BatchCyclesResponse,
+    dependencies=[Depends(require_trainer_or_admin)],
+)
+def get_batch_cycles(
+    request: schemas.BatchCyclesRequest, db: Session = Depends(get_db)
+):
+    """Return all active cycles (macro, meso, micro) for multiple plans in one request.
+    
+    This endpoint efficiently retrieves cycles for multiple training plans using
+    batch queries, reducing the number of database round trips from N to 3.
+    
+    Handles partial failures gracefully - if a plan doesn't exist or isn't accessible,
+    it's added to the errors dict but doesn't break the entire request.
+    """
+    if not request.plan_ids:
+        return schemas.BatchCyclesResponse(cycles={}, errors={})
+    
+    # Verify plans exist and are active (batch query)
+    plans = (
+        db.query(models.TrainingPlan)
+        .filter(
+            models.TrainingPlan.id.in_(request.plan_ids),
+            models.TrainingPlan.is_active.is_(True),
+        )
+        .all()
+    )
+    
+    valid_plan_ids = {p.id for p in plans}
+    errors = {}
+    for plan_id in request.plan_ids:
+        if plan_id not in valid_plan_ids:
+            errors[plan_id] = "Training plan not found or inactive"
+    
+    if not valid_plan_ids:
+        return schemas.BatchCyclesResponse(cycles={}, errors=errors)
+    
+    # Batch query for all macrocycles
+    macrocycles = (
+        db.query(models.Macrocycle)
+        .filter(
+            models.Macrocycle.training_plan_id.in_(valid_plan_ids),
+            models.Macrocycle.is_active.is_(True),
+        )
+        .all()
+    )
+    
+    macro_ids = [m.id for m in macrocycles]
+    
+    # Batch query for all mesocycles
+    mesocycles = (
+        db.query(models.Mesocycle)
+        .filter(
+            models.Mesocycle.macrocycle_id.in_(macro_ids),
+            models.Mesocycle.is_active.is_(True),
+        )
+        .all()
+        if macro_ids
+        else []
+    )
+    
+    meso_ids = [m.id for m in mesocycles]
+    
+    # Batch query for all microcycles
+    microcycles = (
+        db.query(models.Microcycle)
+        .filter(
+            models.Microcycle.mesocycle_id.in_(meso_ids),
+            models.Microcycle.is_active.is_(True),
+        )
+        .all()
+        if meso_ids
+        else []
+    )
+    
+    # Group cycles by plan_id
+    macros_by_plan = {pid: [] for pid in valid_plan_ids}
+    for mc in macrocycles:
+        macros_by_plan.setdefault(mc.training_plan_id, []).append(mc)
+    
+    mesos_by_macro = {mid: [] for mid in macro_ids}
+    for ms in mesocycles:
+        mesos_by_macro.setdefault(ms.macrocycle_id, []).append(ms)
+    
+    micros_by_meso = {mid: [] for mid in meso_ids}
+    for mi in microcycles:
+        micros_by_meso.setdefault(mi.mesocycle_id, []).append(mi)
+    
+    # Build response for each plan
+    cycles_dict = {}
+    for plan_id in valid_plan_ids:
+        plan_macros = macros_by_plan.get(plan_id, [])
+        plan_meso = []
+        for mc in plan_macros:
+            plan_meso.extend(mesos_by_macro.get(mc.id, []))
+        plan_micro = []
+        for ms in plan_meso:
+            plan_micro.extend(micros_by_meso.get(ms.id, []))
+        
+        cycles_dict[plan_id] = schemas.AllCyclesResponse(
+            macrocycles=plan_macros,
+            mesocycles=plan_meso,
+            microcycles=plan_micro,
+        )
+    
+    return schemas.BatchCyclesResponse(cycles=cycles_dict, errors=errors)
 
 
 @router.put(
@@ -685,7 +827,7 @@ def assign_template_to_client(
 ):
     """
     Assign a template to a client (creates instance with all cycles duplicated).
-    
+
     This endpoint:
     - Creates a new TrainingPlanInstance for the client
     - Duplicates all macrocycles, mesocycles, and microcycles from the template
@@ -693,22 +835,23 @@ def assign_template_to_client(
     - Increments the template's usage_count
     """
     from datetime import datetime as dt
-    
+
     try:
         # Parse dates
         parsed_start_date = dt.strptime(start_date, "%Y-%m-%d").date()
         parsed_end_date = dt.strptime(end_date, "%Y-%m-%d").date()
     except ValueError as e:
         raise HTTPException(
-            status_code=422, detail=f"Invalid date format. Use YYYY-MM-DD. Error: {str(e)}"
+            status_code=422,
+            detail=f"Invalid date format. Use YYYY-MM-DD. Error: {str(e)}",
         )
-    
+
     # Validate dates
     if parsed_start_date >= parsed_end_date:
         raise HTTPException(
             status_code=422, detail="start_date must be before end_date"
         )
-    
+
     try:
         instance = crud.assign_template_to_client(
             db=db,
@@ -723,7 +866,9 @@ def assign_template_to_client(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error assigning template: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error assigning template: {str(e)}"
+        )
 
 
 # Training Plan Instances
@@ -828,11 +973,14 @@ def assign_plan_to_another_client(
         parsed_end_date = dt.strptime(end_date, "%Y-%m-%d").date()
     except ValueError as e:
         raise HTTPException(
-            status_code=422, detail=f"Invalid date format. Use YYYY-MM-DD. Error: {str(e)}"
+            status_code=422,
+            detail=f"Invalid date format. Use YYYY-MM-DD. Error: {str(e)}",
         )
 
     if parsed_start_date >= parsed_end_date:
-        raise HTTPException(status_code=422, detail="start_date must be before end_date")
+        raise HTTPException(
+            status_code=422, detail="start_date must be before end_date"
+        )
 
     try:
         instance = crud.assign_plan_to_another_client(
@@ -864,7 +1012,7 @@ def convert_plan_to_template(
 ):
     """
     Convert a specific plan to a template (reusable).
-    
+
     This endpoint:
     - Creates a new TrainingPlanTemplate from the plan
     - Duplicates all cycles as template cycles
@@ -942,7 +1090,9 @@ def duplicate_template(template_id: int, db: Session = Depends(get_db)):
             db.add(new_meso)
             db.flush()
 
-            template_microcycles = crud.get_microcycles_by_mesocycle(db, template_meso.id)
+            template_microcycles = crud.get_microcycles_by_mesocycle(
+                db, template_meso.id
+            )
 
             for template_micro in template_microcycles:
                 new_micro = models.Microcycle(
@@ -971,15 +1121,17 @@ def duplicate_template(template_id: int, db: Session = Depends(get_db)):
 )
 def get_plan_coherence(
     plan_id: int,
-    deviation_threshold: float = Query(20.0, ge=0, le=100, description="Deviation threshold percentage"),
+    deviation_threshold: float = Query(
+        20.0, ge=0, le=100, description="Deviation threshold percentage"
+    ),
     db: Session = Depends(get_db),
 ):
     """
     Calculate coherence for a training plan.
-    
+
     Coherence measures how well week (Mesocycle) and day (Microcycle) values
     match the planned month (Macrocycle) values.
-    
+
     Returns:
     - month_coherence: Baseline values (always 100%)
     - week_coherence: Comparison of weeks to months
@@ -994,4 +1146,212 @@ def get_plan_coherence(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error calculating coherence: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error calculating coherence: {str(e)}"
+        )
+
+
+# Training Plan Alignment Endpoint
+@router.get(
+    "/{plan_id}/alignment",
+    response_model=schemas.TrainingPlanAlignmentOut,
+    dependencies=[Depends(require_trainer_or_admin)],
+)
+def get_training_plan_alignment(
+    plan_id: int,
+    mesocycle_id: Optional[int] = Query(
+        None, description="Optional mesocycle ID to show parent macrocycle values"
+    ),
+    microcycle_id: Optional[int] = Query(
+        None, description="Optional microcycle ID to show parent mesocycle values"
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Get alignment data for a training plan.
+
+    Shows parent cycle values when planning at child levels:
+    - When mesocycle_id is provided, shows parent macrocycle (yearly) values
+    - When microcycle_id is provided, shows parent mesocycle (monthly) values
+
+    Also provides all cycles (macro, meso, micro) with their physical qualities,
+    volume, and intensity for graph visualization.
+
+    This endpoint supports the Training Planning tab where trainers plan from
+    Yearly → Monthly → Weekly and need to see alignment between levels.
+    """
+    try:
+        alignment_data = crud.get_training_plan_alignment(
+            db=db,
+            plan_id=plan_id,
+            mesocycle_id=mesocycle_id,
+            microcycle_id=microcycle_id,
+        )
+        return alignment_data
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error getting alignment data: {str(e)}"
+        )
+
+
+# Planning Endpoints
+@router.get(
+    "/{plan_id}/planning/yearly",
+    response_model=schemas.PlanningYearlyResponse,
+    dependencies=[Depends(require_trainer_or_admin)],
+)
+def get_planning_yearly(
+    plan_id: int,
+    year: Optional[int] = Query(None, description="Year (defaults to current year)"),
+    db: Session = Depends(get_db),
+):
+    """Get yearly planning view for a training plan"""
+    try:
+        planning_data = crud.get_planning_yearly(db=db, plan_id=plan_id, year=year)
+        return planning_data
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error getting yearly planning: {str(e)}"
+        )
+
+
+@router.get(
+    "/{plan_id}/planning/monthly",
+    response_model=schemas.PlanningMonthlyResponse,
+    dependencies=[Depends(require_trainer_or_admin)],
+)
+def get_planning_monthly(
+    plan_id: int,
+    year: Optional[int] = Query(None, description="Year (defaults to current year)"),
+    month: Optional[int] = Query(
+        None, ge=1, le=12, description="Month 1-12 (defaults to current month)"
+    ),
+    db: Session = Depends(get_db),
+):
+    """Get monthly planning view for a training plan"""
+    try:
+        planning_data = crud.get_planning_monthly(
+            db=db, plan_id=plan_id, year=year, month=month
+        )
+        return planning_data
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error getting monthly planning: {str(e)}"
+        )
+
+
+@router.get(
+    "/{plan_id}/planning/weekly",
+    response_model=schemas.PlanningWeeklyResponse,
+    dependencies=[Depends(require_trainer_or_admin)],
+)
+def get_planning_weekly(
+    plan_id: int,
+    week_start: Optional[str] = Query(
+        None, description="Week start date (YYYY-MM-DD, defaults to current week)"
+    ),
+    db: Session = Depends(get_db),
+):
+    """Get weekly planning view for a training plan"""
+    from datetime import datetime as dt
+
+    try:
+        week_start_date = None
+        if week_start:
+            week_start_date = dt.strptime(week_start, "%Y-%m-%d").date()
+        planning_data = crud.get_planning_weekly(
+            db=db, plan_id=plan_id, week_start=week_start_date
+        )
+        return planning_data
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error getting weekly planning: {str(e)}"
+        )
+
+
+@router.put(
+    "/{plan_id}/planning/distribution",
+    dependencies=[Depends(require_trainer_or_admin)],
+)
+def update_planning_distribution(
+    plan_id: int,
+    update_request: schemas.DistributionUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """Update physical qualities distribution for multiple cycles"""
+    try:
+        result = crud.update_planning_distribution(
+            db=db, plan_id=plan_id, update_request=update_request
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error updating distribution: {str(e)}"
+        )
+
+
+@router.put(
+    "/{plan_id}/planning/load",
+    dependencies=[Depends(require_trainer_or_admin)],
+)
+def update_planning_load(
+    plan_id: int,
+    update_request: schemas.LoadUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """Update volume/intensity for multiple cycles"""
+    try:
+        result = crud.update_planning_load(
+            db=db, plan_id=plan_id, update_request=update_request
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating load: {str(e)}")
+
+
+@router.post(
+    "/{plan_id}/planning/sync-bottom-up",
+    response_model=schemas.BottomUpSyncResponse,
+    dependencies=[Depends(require_trainer_or_admin)],
+)
+def sync_plan_bottom_up(
+    plan_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Synchronize training plan from bottom-up (micro → meso → macro).
+
+    This endpoint recalculates:
+    1. All mesocycles from their child microcycles (weekly → monthly)
+    2. All macrocycles from their child mesocycles (monthly → yearly)
+
+    Use this when a trainer has edited planning at the weekly/micro level
+    and wants to automatically update the monthly and yearly structure.
+
+    The calculation uses weighted averages based on cycle duration:
+    - Microcycle contributions weighted by duration_days
+    - Mesocycle contributions weighted by duration_weeks
+
+    Returns detailed information about all recalculations performed.
+    """
+    try:
+        result = crud.sync_plan_bottom_up(db=db, plan_id=plan_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error syncing plan bottom-up: {str(e)}"
+        )
